@@ -22,6 +22,11 @@ class AppConfig:
     ollama_chat_model: str
     ollama_embedding_model: str
     top_k_results: int
+    chunk_size: int = 1000
+    chunk_overlap: int = 150
+    retrieval_candidate_multiplier: int = 2
+    chunking_strategy: str = "markdown"
+    enable_reranking: bool = False
     chroma_collection_name: str = "obsidian_notes"
     ollama_timeout_seconds: int = 60
 
@@ -37,9 +42,25 @@ def load_config() -> AppConfig:
     chat_model = os.getenv("OLLAMA_CHAT_MODEL", "hermes3").strip()
     embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text").strip()
     top_k_results = _required_int_env("TOP_K_RESULTS", default=3, minimum=1)
+    chunk_size = _required_int_env("CHUNK_SIZE", default=1000, minimum=100)
+    chunk_overlap = _required_int_env("CHUNK_OVERLAP", default=150, minimum=0)
+    retrieval_candidate_multiplier = _required_int_env(
+        "RETRIEVAL_CANDIDATE_MULTIPLIER",
+        default=2,
+        minimum=1,
+    )
+    chunking_strategy = _choice_env(
+        "CHUNKING_STRATEGY",
+        default="markdown",
+        choices={"markdown", "sentence"},
+    )
+    enable_reranking = _bool_env("ENABLE_RERANKING", default=False)
 
     ensure_directory(output_path)
     ensure_directory(chroma_path)
+
+    if chunk_overlap >= chunk_size:
+        raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE.")
 
     return AppConfig(
         obsidian_vault_path=vault_path,
@@ -49,6 +70,11 @@ def load_config() -> AppConfig:
         ollama_chat_model=chat_model,
         ollama_embedding_model=embedding_model,
         top_k_results=top_k_results,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        retrieval_candidate_multiplier=retrieval_candidate_multiplier,
+        chunking_strategy=chunking_strategy,
+        enable_reranking=enable_reranking,
     )
 
 
@@ -74,4 +100,20 @@ def _required_int_env(name: str, *, default: int, minimum: int) -> int:
 
     if value < minimum:
         raise ValueError(f"{name} must be at least {minimum}. Received: {value}")
+    return value
+
+
+def _bool_env(name: str, *, default: bool) -> bool:
+    raw_value = os.getenv(name, str(default)).strip().lower()
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value. Received: {raw_value}")
+
+
+def _choice_env(name: str, *, default: str, choices: set[str]) -> str:
+    value = os.getenv(name, default).strip().lower()
+    if value not in choices:
+        raise ValueError(f"{name} must be one of: {', '.join(sorted(choices))}. Received: {value}")
     return value

@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from config import AppConfig
 from main import run_index
-from utils import RetrievalFilters
+from retriever import Retriever
+from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
 
@@ -89,3 +90,71 @@ class IncrementalIndexingTests(unittest.TestCase):
             self.assertEqual(folder_results[0].metadata["source_dir"], "projects")
             self.assertEqual(len(path_results), 1)
             self.assertEqual(path_results[0].metadata["source_path"], "projects/agents.md")
+
+    def test_retriever_uses_candidate_count_and_final_top_k(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def __init__(self) -> None:
+                    self.requested_top_k = None
+
+                def count(self) -> int:
+                    return 3
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None) -> list[RetrievedChunk]:
+                    self.requested_top_k = top_k
+                    return [
+                        RetrievedChunk("one", {"note_title": "One", "source_path": "one.md"}, 0.1),
+                        RetrievedChunk("two", {"note_title": "Two", "source_path": "two.md"}, 0.2),
+                        RetrievedChunk("three", {"note_title": "Three", "source_path": "three.md"}, 0.3),
+                    ]
+
+            store = StubVectorStore()
+            retriever = Retriever(config, StubEmbeddingClient(), store)
+
+            results = retriever.retrieve(
+                "question",
+                options=RetrievalOptions(top_k=2, candidate_count=3, rerank=False),
+            )
+
+            self.assertEqual(store.requested_top_k, 3)
+            self.assertEqual(len(results), 2)
+
+    def test_retriever_reranks_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def count(self) -> int:
+                    return 2
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None) -> list[RetrievedChunk]:
+                    return [
+                        RetrievedChunk("general planning note", {"note_title": "Planning", "source_path": "planning.md"}, 0.05),
+                        RetrievedChunk("ai agents use retrieval tools", {"note_title": "Agents", "source_path": "agents.md"}, 0.25),
+                    ]
+
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+
+            results = retriever.retrieve(
+                "How do AI agents use retrieval tools?",
+                options=RetrievalOptions(top_k=1, candidate_count=2, rerank=True),
+            )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].metadata["note_title"], "Agents")

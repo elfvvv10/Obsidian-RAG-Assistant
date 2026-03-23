@@ -99,9 +99,15 @@ def build_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
             title = chunk.metadata.get("note_title", "Untitled note")
             source_path = chunk.metadata.get("source_path", "unknown")
             heading_context = chunk.metadata.get("heading_context", "")
-            heading_line = f" - {heading_context}" if heading_context else ""
+            heading_line = f" | Section: {heading_context}" if heading_context else ""
+            score_line = ""
+            if chunk.distance_or_score is not None:
+                score_line = f"\nRelevance distance: {chunk.distance_or_score:.4f}"
             parts.append(
-                f"[Source {index}] {title}{heading_line} ({source_path})\n{chunk.text}"
+                f"[Source {index}]\n"
+                f"Title: {title}{heading_line}\n"
+                f"Path: {source_path}{score_line}\n"
+                f"Content:\n{chunk.text}"
             )
         context_block = "\n\n".join(parts)
 

@@ -42,6 +42,36 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             run_index_mock.assert_called_once_with(config, reset_store=False)
 
+    def test_main_index_command_applies_chunk_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            with patch("main.load_config", return_value=config), patch(
+                "main.run_index"
+            ) as run_index_mock, patch(
+                "sys.argv",
+                [
+                    "main.py",
+                    "index",
+                    "--chunk-size",
+                    "800",
+                    "--chunk-overlap",
+                    "100",
+                    "--chunking-strategy",
+                    "sentence",
+                ],
+            ):
+                exit_code = main.main()
+
+            self.assertEqual(exit_code, 0)
+            overridden_config = run_index_mock.call_args.args[0]
+            self.assertEqual(overridden_config.chunk_size, 800)
+            self.assertEqual(overridden_config.chunk_overlap, 100)
+            self.assertEqual(overridden_config.chunking_strategy, "sentence")
+
     def test_main_ask_command_passes_filters_and_prints_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -84,3 +114,39 @@ class CLITests(unittest.TestCase):
             output = buffer.getvalue()
             self.assertIn("Grounded answer", output)
             self.assertIn("projects/agents.md", output)
+
+    def test_main_ask_command_passes_retrieval_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            retrieved = [
+                RetrievedChunk(
+                    text="Agent note content",
+                    metadata={"note_title": "Agents", "source_path": "projects/agents.md"},
+                    distance_or_score=0.1,
+                )
+            ]
+
+            with patch("main.load_config", return_value=config), patch(
+                "main.Retriever.retrieve", return_value=retrieved
+            ) as retrieve_mock, patch(
+                "main.OllamaChatClient.answer_question",
+                return_value="Grounded answer",
+            ), patch(
+                "main.prompt_to_save",
+                return_value=False,
+            ), patch(
+                "sys.argv",
+                ["main.py", "ask", "What do my notes say?", "--top-k", "2", "--candidate-count", "4", "--rerank"],
+            ):
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    exit_code = main.main()
+
+            self.assertEqual(exit_code, 0)
+            called_options = retrieve_mock.call_args.kwargs["options"]
+            self.assertEqual(called_options.top_k, 2)
+            self.assertEqual(called_options.candidate_count, 4)
+            self.assertTrue(called_options.rerank)

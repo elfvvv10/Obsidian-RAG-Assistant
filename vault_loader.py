@@ -7,11 +7,12 @@ from pathlib import Path
 from utils import Note
 
 
-def load_notes(vault_path: Path) -> list[Note]:
+def load_notes(vault_path: Path, excluded_paths: list[Path] | None = None) -> list[Note]:
     """Recursively load markdown notes from a vault directory."""
     notes: list[Note] = []
+    excluded_paths = [path.resolve() for path in (excluded_paths or [])]
 
-    for file_path in sorted(_iter_markdown_files(vault_path)):
+    for file_path in sorted(_iter_markdown_files(vault_path, excluded_paths)):
         content = _read_text(file_path)
         if not content.strip():
             continue
@@ -28,15 +29,20 @@ def load_notes(vault_path: Path) -> list[Note]:
     return notes
 
 
-def _iter_markdown_files(vault_path: Path):
+def _iter_markdown_files(vault_path: Path, excluded_paths: list[Path]):
     for path in vault_path.rglob("*.md"):
-        if _should_skip(path, vault_path):
+        if _should_skip(path, vault_path, excluded_paths):
             continue
         if path.is_file():
             yield path
 
 
-def _should_skip(path: Path, vault_path: Path) -> bool:
+def _should_skip(path: Path, vault_path: Path, excluded_paths: list[Path]) -> bool:
+    resolved_path = path.resolve()
+    for excluded_path in excluded_paths:
+        if resolved_path == excluded_path or excluded_path in resolved_path.parents:
+            return True
+
     relative_parts = path.relative_to(vault_path).parts
     return any(part.startswith(".") or part == ".obsidian" for part in relative_parts)
 

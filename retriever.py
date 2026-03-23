@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
-from utils import RetrievalFilters, RetrievedChunk
+from reranker import rerank_chunks
+from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
 
@@ -25,10 +26,26 @@ class Retriever:
         self,
         query: str,
         filters: RetrievalFilters | None = None,
+        options: RetrievalOptions | None = None,
     ) -> list[RetrievedChunk]:
         """Return the top-k relevant chunks for a question."""
         if self.vector_store.count() == 0:
             raise RuntimeError("The vector store is empty. Run `python main.py index` first.")
 
+        top_k = options.top_k if options and options.top_k is not None else self.config.top_k_results
+        candidate_count = (
+            options.candidate_count
+            if options and options.candidate_count is not None
+            else max(top_k, top_k * self.config.retrieval_candidate_multiplier)
+        )
+        rerank_enabled = (
+            options.rerank
+            if options and options.rerank is not None
+            else self.config.enable_reranking
+        )
+
         query_embedding = self.embedding_client.embed_text(query)
-        return self.vector_store.query(query_embedding, self.config.top_k_results, filters=filters)
+        chunks = self.vector_store.query(query_embedding, candidate_count, filters=filters)
+        if rerank_enabled:
+            chunks = rerank_chunks(query, chunks)
+        return chunks[:top_k]

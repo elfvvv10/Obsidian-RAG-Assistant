@@ -24,6 +24,19 @@ class VaultLoaderTests(unittest.TestCase):
             self.assertEqual(len(notes), 1)
             self.assertEqual(notes[0].title, "Visible")
 
+    def test_load_notes_ignores_configured_output_folder_inside_vault(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vault = Path(tmp_dir)
+            output_dir = vault / "research_answers"
+            output_dir.mkdir()
+            (vault / "source.md").write_text("# Source\nkeep", encoding="utf-8")
+            (output_dir / "saved_answer.md").write_text("# Saved\nignore", encoding="utf-8")
+
+            notes = load_notes(vault, excluded_paths=[output_dir])
+
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0].title, "Source")
+
 
 class ChunkerTests(unittest.TestCase):
     def test_chunk_notes_preserves_metadata(self) -> None:
@@ -56,6 +69,23 @@ class ChunkerTests(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[0].heading_context, "Agents")
         self.assertIn("Retrieval", {chunk.heading_context for chunk in chunks})
+
+    def test_chunk_notes_supports_sentence_strategy(self) -> None:
+        note = Note(
+            path="notes/agents.md",
+            title="Agents",
+            content=(
+                "# Agents\n\n"
+                "Agents plan carefully. Agents use tools effectively. Agents rely on context. "
+                "Good retrieval improves grounded answers."
+            ),
+        )
+
+        chunks = chunk_notes([note], chunk_size=55, overlap=10, strategy="sentence")
+
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].heading_context, "Agents")
+        self.assertTrue(any("Agents use tools effectively." in chunk.text for chunk in chunks))
 
 
 if __name__ == "__main__":

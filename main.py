@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import sys
 
 from agent import ResearchAgent
@@ -12,7 +13,7 @@ from embeddings import OllamaEmbeddingClient
 from llm import OllamaChatClient
 from retriever import Retriever
 from saver import prompt_to_save, save_answer
-from utils import RetrievalFilters, get_logger
+from utils import RetrievalFilters, RetrievalOptions, get_logger
 from vault_loader import load_notes
 from vector_store import VectorStore
 
@@ -32,15 +33,18 @@ def main() -> int:
     try:
         config = load_config()
         if args.command == "index":
-            run_index(config, reset_store=False)
+            run_index(_config_with_index_overrides(config, args), reset_store=False)
         elif args.command == "rebuild":
-            run_index(config, reset_store=True)
+            run_index(_config_with_index_overrides(config, args), reset_store=True)
         elif args.command == "ask":
             run_ask(
                 config,
                 args.question,
                 folder=args.folder,
                 path_contains=args.path_contains,
+                top_k=args.top_k,
+                candidate_count=args.candidate_count,
+                rerank=args.rerank,
             )
         else:
             parser.print_help()
@@ -58,7 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("index", help="Build the vector index from the configured vault")
-    subparsers.add_parser("rebuild", help="Clear and rebuild the vector index")
+    rebuild_parser = subparsers.add_parser("rebuild", help="Clear and rebuild the vector index")
+
+    index_parser = subparsers.choices["index"]
+    _add_index_overrides(index_parser)
+    _add_index_overrides(rebuild_parser)
 
     ask_parser = subparsers.add_parser("ask", help="Ask a question against the indexed notes")
     ask_parser.add_argument("question", help="Question to ask about the indexed vault")
@@ -70,13 +78,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--path-contains",
         help="Only retrieve notes whose path contains this text",
     )
+    ask_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Override the number of final chunks used to answer the question",
+    )
+    ask_parser.add_argument(
+        "--candidate-count",
+        type=int,
+        help="Override the number of chunks retrieved before reranking",
+    )
+    ask_parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Enable simple heuristic reranking for this query",
+    )
     return parser
 
 
 def run_index(config: AppConfig, *, reset_store: bool) -> None:
     """Index vault notes into the local vector store."""
     logger.info("Loading notes from %s", config.obsidian_vault_path)
-    notes = load_notes(config.obsidian_vault_path)
+    excluded_paths = []
+    if config.obsidian_output_path != config.obsidian_vault_path:
+        excluded_paths.append(config.obsidian_output_path)
+
+    notes = load_notes(config.obsidian_vault_path, excluded_paths=excluded_paths)
     embedding_client = OllamaEmbeddingClient(config)
     vector_store = VectorStore(config)
     if reset_store:
@@ -92,7 +119,12 @@ def run_index(config: AppConfig, *, reset_store: bool) -> None:
             return
         raise RuntimeError("No markdown notes were found in the configured vault.")
 
-    chunks = chunk_notes(notes)
+    chunks = chunk_notes(
+        notes,
+        chunk_size=config.chunk_size,
+        overlap=config.chunk_overlap,
+        strategy=config.chunking_strategy,
+    )
     if not chunks:
         raise RuntimeError("No note chunks were created from the vault contents.")
 
@@ -138,8 +170,18 @@ def run_ask(
     *,
     folder: str | None = None,
     path_contains: str | None = None,
+    top_k: int | None = None,
+    candidate_count: int | None = None,
+    rerank: bool = False,
 ) -> None:
     """Answer a question from the indexed vault."""
+    if top_k is not None and top_k < 1:
+        raise ValueError("--top-k must be at least 1.")
+    if candidate_count is not None and candidate_count < 1:
+        raise ValueError("--candidate-count must be at least 1.")
+    if top_k is not None and candidate_count is not None and candidate_count < top_k:
+        raise ValueError("--candidate-count must be greater than or equal to --top-k.")
+
     embedding_client = OllamaEmbeddingClient(config)
     vector_store = VectorStore(config)
     retriever = Retriever(config, embedding_client, vector_store)
@@ -149,9 +191,14 @@ def run_ask(
         folder=folder.strip().strip("/") if folder else None,
         path_contains=path_contains.strip().lower() if path_contains else None,
     )
+    options = RetrievalOptions(
+        top_k=top_k,
+        candidate_count=candidate_count,
+        rerank=True if rerank else None,
+    )
 
     logger.info("Retrieving relevant notes")
-    result = agent.answer(question, filters=filters)
+    result = agent.answer(question, filters=filters, options=options)
 
     if not result.retrieved_chunks:
         raise RuntimeError("No indexed notes matched the requested retrieval filters.")
@@ -177,6 +224,50 @@ def _group_chunks_by_note_key(chunks: list) -> dict[str, list]:
     for chunk in chunks:
         grouped_chunks.setdefault(chunk.note_key, []).append(chunk)
     return grouped_chunks
+
+
+def _add_index_overrides(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        help="Override the configured chunk size for this indexing run",
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        help="Override the configured chunk overlap for this indexing run",
+    )
+    parser.add_argument(
+        "--chunking-strategy",
+        choices=["markdown", "sentence"],
+        help="Override the chunking strategy for this indexing run",
+    )
+
+
+def _config_with_index_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
+    chunk_size = args.chunk_size if getattr(args, "chunk_size", None) is not None else config.chunk_size
+    chunk_overlap = (
+        args.chunk_overlap if getattr(args, "chunk_overlap", None) is not None else config.chunk_overlap
+    )
+    chunking_strategy = (
+        args.chunking_strategy
+        if getattr(args, "chunking_strategy", None) is not None
+        else config.chunking_strategy
+    )
+
+    if chunk_size <= 0:
+        raise ValueError("--chunk-size must be greater than 0.")
+    if chunk_overlap < 0:
+        raise ValueError("--chunk-overlap must be 0 or greater.")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("--chunk-overlap must be smaller than --chunk-size.")
+
+    return replace(
+        config,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        chunking_strategy=chunking_strategy,
+    )
 
 
 if __name__ == "__main__":

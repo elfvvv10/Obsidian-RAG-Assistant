@@ -5,11 +5,12 @@ A local-first Python CLI that turns an Obsidian vault into a retrieval-augmented
 ## Features
 
 - Reads Markdown notes from an Obsidian vault
-- Chunks note content into retrieval-friendly Markdown-aware segments
+- Chunks note content into retrieval-friendly Markdown-aware or sentence-aware segments
 - Creates embeddings locally with Ollama
 - Stores embeddings in a local ChromaDB database
 - Retrieves relevant note chunks for a question
 - Supports optional retrieval filters by folder and path text
+- Supports configurable chunk sizing, candidate retrieval depth, and optional reranking
 - Generates grounded answers with a local Ollama chat model
 - Shows source note references in the terminal
 - Optionally saves answers back into the vault as Markdown notes
@@ -34,18 +35,19 @@ This helps keep answers grounded in your own notes.
 
 The v1 flow is:
 
-`Obsidian vault -> vault loader -> Markdown-aware chunker -> Ollama embeddings -> ChromaDB -> retriever -> Ollama chat -> terminal answer -> optional save-back`
+`Obsidian vault -> vault loader -> configurable chunker -> Ollama embeddings -> ChromaDB -> retriever -> optional reranker -> Ollama chat -> terminal answer -> optional save-back`
 
 Core modules:
 
 - `main.py`: CLI entrypoint
 - `config.py`: environment loading and validation
 - `vault_loader.py`: Markdown vault scanning
-- `chunker.py`: Markdown-aware chunk creation with overlap
+- `chunker.py`: configurable Markdown-aware and sentence-aware chunk creation
 - `embeddings.py`: Ollama embedding API client
 - `llm.py`: Ollama chat API client
 - `vector_store.py`: ChromaDB persistence
-- `retriever.py`: query embedding + similarity lookup with optional filters
+- `retriever.py`: query embedding + candidate retrieval + optional reranking
+- `reranker.py`: lightweight heuristic reranking
 - `agent.py`: retrieval + answer orchestration
 - `saver.py`: save answer back to Markdown
 - `utils.py`: shared models and helpers
@@ -111,6 +113,11 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_CHAT_MODEL=hermes3
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 TOP_K_RESULTS=3
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=150
+RETRIEVAL_CANDIDATE_MULTIPLIER=2
+CHUNKING_STRATEGY=markdown
+ENABLE_RERANKING=false
 ```
 
 Variable notes:
@@ -122,6 +129,11 @@ Variable notes:
 - `OLLAMA_CHAT_MODEL`: local chat model
 - `OLLAMA_EMBEDDING_MODEL`: local embedding model
 - `TOP_K_RESULTS`: number of chunks to retrieve per question
+- `CHUNK_SIZE`: default chunk size used during indexing
+- `CHUNK_OVERLAP`: overlap between adjacent chunks
+- `RETRIEVAL_CANDIDATE_MULTIPLIER`: fetch more candidates before final selection
+- `CHUNKING_STRATEGY`: `markdown` or `sentence`
+- `ENABLE_RERANKING`: enable simple heuristic reranking by default
 
 ## Index Your Notes
 
@@ -129,6 +141,13 @@ Build the local vector index:
 
 ```bash
 python main.py index
+```
+
+Optional indexing overrides:
+
+```bash
+python main.py index --chunk-size 800 --chunk-overlap 100
+python main.py index --chunking-strategy sentence
 ```
 
 `index` is incremental. It updates changed notes, adds new notes, and removes deleted notes without rebuilding the whole collection.
@@ -152,6 +171,7 @@ Optional filters:
 ```bash
 python main.py ask "What do my notes say about AI agents?" --folder projects
 python main.py ask "What do my notes say about AI agents?" --path-contains agents
+python main.py ask "What do my notes say about AI agents?" --top-k 2 --candidate-count 6 --rerank
 ```
 
 The app will:

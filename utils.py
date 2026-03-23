@@ -112,3 +112,12 @@ class RetrievalFilters:
 
     folder: str | None = None
     path_contains: str | None = None
+
+
+@dataclass(slots=True)
+class RetrievalOptions:
+    """Optional retrieval controls for candidate selection and reranking."""
+
+    top_k: int | None = None
+    candidate_count: int | None = None
+    rerank: bool | None = None

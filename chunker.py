@@ -13,6 +13,7 @@ def chunk_notes(
     *,
     chunk_size: int = 1000,
     overlap: int = 150,
+    strategy: str = "markdown",
 ) -> list[Chunk]:
     """Split notes into simple Markdown-aware chunks with overlap."""
     if chunk_size <= overlap:
@@ -31,7 +32,10 @@ def chunk_notes(
         note_fingerprint = compute_note_fingerprint(note_path, normalized_text)
         source_dir = _path_directory(note_path)
 
-        chunk_texts = _chunk_markdown_text(normalized_text, chunk_size=chunk_size, overlap=overlap)
+        if strategy == "sentence":
+            chunk_texts = _chunk_sentence_text(normalized_text, chunk_size=chunk_size, overlap=overlap)
+        else:
+            chunk_texts = _chunk_markdown_text(normalized_text, chunk_size=chunk_size, overlap=overlap)
         for chunk_index, chunk_info in enumerate(chunk_texts):
             chunks.append(
                 Chunk(
@@ -48,6 +52,57 @@ def chunk_notes(
             )
 
     return chunks
+
+
+def _chunk_sentence_text(text: str, *, chunk_size: int, overlap: int) -> list[dict[str, str]]:
+    sections = _split_into_sections(text)
+    chunks: list[dict[str, str]] = []
+    previous_text = ""
+
+    for heading, section_text in sections:
+        sentences = _split_into_sentences(section_text)
+        if not sentences:
+            continue
+
+        buffer = ""
+        for sentence in sentences:
+            candidate = f"{buffer} {sentence}".strip() if buffer else sentence
+            if len(candidate) <= chunk_size:
+                buffer = candidate
+                continue
+
+            if buffer:
+                chunks.append(
+                    {
+                        "text": _apply_overlap(previous_text, buffer, overlap),
+                        "heading_context": heading,
+                    }
+                )
+                previous_text = buffer
+
+            if len(sentence) <= chunk_size:
+                buffer = sentence
+            else:
+                for fallback_text in _fallback_split(sentence, chunk_size=chunk_size, overlap=overlap):
+                    chunks.append(
+                        {
+                            "text": _apply_overlap(previous_text, fallback_text, overlap),
+                            "heading_context": heading,
+                        }
+                    )
+                    previous_text = fallback_text
+                buffer = ""
+
+        if buffer:
+            chunks.append(
+                {
+                    "text": _apply_overlap(previous_text, buffer, overlap),
+                    "heading_context": heading,
+                }
+            )
+            previous_text = buffer
+
+    return [chunk for chunk in chunks if chunk["text"].strip()]
 
 
 def _chunk_markdown_text(text: str, *, chunk_size: int, overlap: int) -> list[dict[str, str]]:
@@ -135,6 +190,15 @@ def _split_large_section(section_text: str, *, chunk_size: int, heading: str) ->
 def _fallback_split(text: str, *, chunk_size: int, overlap: int) -> list[str]:
     step = chunk_size - overlap
     return [text[start : start + chunk_size].strip() for start in range(0, len(text), step) if text[start : start + chunk_size].strip()]
+
+
+def _split_into_sentences(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        return []
+
+    parts = re.split(r"(?<=[.!?])\s+", normalized)
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _apply_overlap(previous_text: str, current_text: str, overlap: int) -> str:
