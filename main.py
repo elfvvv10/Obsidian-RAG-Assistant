@@ -134,6 +134,8 @@ def run_index(config: AppConfig, *, reset_store: bool) -> None:
     if reset_store:
         logger.info("Resetting Chroma collection")
         vector_store.reset()
+    else:
+        _ensure_index_compatible(vector_store)
 
     existing_fingerprints = {} if reset_store else vector_store.list_note_fingerprints()
     if not notes:
@@ -213,6 +215,7 @@ def run_ask(
 
     embedding_client = OllamaEmbeddingClient(config)
     vector_store = VectorStore(config)
+    _ensure_index_compatible(vector_store)
     retriever = Retriever(config, embedding_client, vector_store)
     chat_client = OllamaChatClient(config)
     agent = ResearchAgent(retriever, chat_client)
@@ -320,6 +323,15 @@ def _config_with_index_overrides(config: AppConfig, args: argparse.Namespace) ->
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         chunking_strategy=chunking_strategy,
+    )
+
+
+def _ensure_index_compatible(vector_store: VectorStore) -> None:
+    if vector_store.is_index_compatible():
+        return
+    raise RuntimeError(
+        "The local index format is out of date for this version of the app. "
+        "Run `python main.py rebuild` to recreate the index."
     )
 
 

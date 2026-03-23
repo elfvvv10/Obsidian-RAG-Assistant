@@ -32,6 +32,13 @@ class Retriever:
         if self.vector_store.count() == 0:
             raise RuntimeError("The vector store is empty. Run `python main.py index` first.")
 
+        settings = self._resolve_settings(options)
+        candidates = self._run_vector_retrieval(query, filters, settings["candidate_count"])
+        ranked_chunks = self._apply_reranking(query, candidates, settings)
+        primary_chunks = self._select_primary_chunks(ranked_chunks, settings["top_k"])
+        return self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"])
+
+    def _resolve_settings(self, options: RetrievalOptions | None) -> dict[str, object]:
         top_k = options.top_k if options and options.top_k is not None else self.config.top_k_results
         candidate_count = (
             options.candidate_count
@@ -43,23 +50,52 @@ class Retriever:
             if options and options.rerank is not None
             else self.config.enable_reranking
         )
-        boost_tags = options.boost_tags if options else ()
         include_linked_notes = (
             options.include_linked_notes
             if options and options.include_linked_notes is not None
             else self.config.enable_linked_note_expansion
         )
+        boost_tags = options.boost_tags if options else ()
+        return {
+            "top_k": top_k,
+            "candidate_count": candidate_count,
+            "rerank_enabled": rerank_enabled,
+            "include_linked_notes": include_linked_notes,
+            "boost_tags": boost_tags,
+        }
 
+    def _run_vector_retrieval(
+        self,
+        query: str,
+        filters: RetrievalFilters | None,
+        candidate_count: int,
+    ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_client.embed_text(query)
-        chunks = self.vector_store.query(query_embedding, candidate_count, filters=filters)
-        if rerank_enabled or boost_tags:
-            chunks = rerank_chunks(
-                query,
-                chunks,
-                boost_tags=boost_tags,
-                tag_boost_weight=self.config.tag_boost_weight,
-            )
-        primary_chunks = chunks[:top_k]
+        return self.vector_store.query(query_embedding, candidate_count, filters=filters)
+
+    def _apply_reranking(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        settings: dict[str, object],
+    ) -> list[RetrievedChunk]:
+        if not settings["rerank_enabled"] and not settings["boost_tags"]:
+            return chunks
+        return rerank_chunks(
+            query,
+            chunks,
+            boost_tags=settings["boost_tags"],
+            tag_boost_weight=self.config.tag_boost_weight,
+        )
+
+    def _select_primary_chunks(self, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
+        return chunks[:top_k]
+
+    def _expand_linked_chunks(
+        self,
+        primary_chunks: list[RetrievedChunk],
+        include_linked_notes: bool,
+    ) -> list[RetrievedChunk]:
         if not include_linked_notes:
             return primary_chunks
 

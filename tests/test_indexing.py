@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from config import AppConfig
-from main import run_index
+from main import run_ask, run_index
 from retriever import Retriever
 from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
@@ -158,3 +158,22 @@ class IncrementalIndexingTests(unittest.TestCase):
 
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0].metadata["note_title"], "Agents")
+
+    def test_index_version_mismatch_requires_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            vault.mkdir()
+            (root / "output").mkdir()
+            note_path = vault / "agents.md"
+            note_path.write_text("# Agents\n\nInitial content", encoding="utf-8")
+            config = make_config(root)
+
+            with patch("main.OllamaEmbeddingClient.embed_texts", return_value=[[1.0, 0.0, 0.0]]):
+                run_index(config, reset_store=True)
+
+            store = VectorStore(config)
+            store.write_index_version("old-schema")
+
+            with self.assertRaisesRegex(RuntimeError, "Run `python main.py rebuild`"):
+                run_index(config, reset_store=False)

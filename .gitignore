@@ -6,3 +6,4 @@ __pycache__/
 chroma_db/
 chroma_db_test/
 sample_vault/research_answers/
+.DS_Store

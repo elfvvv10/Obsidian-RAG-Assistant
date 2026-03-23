@@ -18,7 +18,8 @@ A local-first Python CLI that turns an Obsidian vault into a retrieval-augmented
 - Shows source note references in the terminal
 - Optionally saves answers back into the vault as Markdown notes
 - Uses incremental indexing to update only changed notes
-- Includes mocked test coverage for core clients and CLI behavior
+- Excludes saved answers in the configured output folder from indexing when that folder lives inside the vault
+- Includes mocked tests, local smoke tests, and phase-focused module tests
 - Includes a sample vault for quick testing
 
 ## How It Works
@@ -36,7 +37,7 @@ This helps keep answers grounded in your own notes.
 
 ## Architecture Overview
 
-The v1 flow is:
+The current flow is:
 
 `Obsidian vault -> vault loader -> configurable chunker -> Ollama embeddings -> ChromaDB -> retriever -> optional reranker -> Ollama chat -> terminal answer -> optional save-back`
 
@@ -217,6 +218,8 @@ If you answer `y`, or if auto-save is enabled, the app creates a Markdown note c
 - Key points
 - Sources used
 
+If you save the same question repeatedly, the app keeps existing notes and creates deterministic suffixes such as `-answer-2.md`, `-answer-3.md`, and so on.
+
 ## Example Workflow
 
 ```bash
@@ -231,6 +234,8 @@ If you keep the sample settings, saved answers will appear in:
 sample_vault/research_answers/
 ```
 
+When `OBSIDIAN_OUTPUT_PATH` points to a folder inside the vault, saved answer notes in that folder are excluded from indexing by default so they do not pollute retrieval.
+
 ## Project Structure
 
 ```text
@@ -241,8 +246,11 @@ sample_vault/research_answers/
 ├── chunker.py
 ├── embeddings.py
 ├── llm.py
+├── metadata_parser.py
+├── link_parser.py
 ├── vector_store.py
 ├── retriever.py
+├── reranker.py
 ├── agent.py
 ├── saver.py
 ├── utils.py
@@ -252,6 +260,13 @@ sample_vault/research_answers/
 ├── sample_vault/
 └── tests/
 ```
+
+The `tests/` directory includes:
+
+- mocked client and CLI tests
+- local module and smoke tests
+- orchestration-level integration tests using temporary vaults and real local indexing/retrieval flow
+- phase-focused tests for retrieval, metadata, links, and save-back behavior
 
 ## Troubleshooting
 
@@ -322,12 +337,26 @@ Fix:
 - Retry without filters to confirm the note is indexed
 - Run `python main.py index` after adding or moving notes
 
-## Limitations of V1
+### Index format is out of date
+
+Symptom:
+
+- The app tells you the local index format is out of date and asks you to rebuild.
+
+Fix:
+
+```bash
+python main.py rebuild
+```
+
+This can happen after retrieval-relevant schema changes such as new metadata fields or index layout updates.
+
+## Current Limitations
 
 - Chunking is Markdown-aware but still heuristic rather than token-aware
-- Metadata filters currently support folder and path text only
+- Metadata filters are still intentionally simple: folder, path text, and tag-based controls only
 - No GUI or web app
-- Automated tests use mocks rather than live Ollama integrations
+- Automated tests are strong locally, but live Ollama behavior is still mostly verified manually
 - Prompting is intentionally simple
 
 ## Suggested V2 Roadmap

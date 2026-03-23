@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import chromadb
 from math import sqrt
+from pathlib import Path
 
 from config import AppConfig
 from utils import Chunk, RetrievalFilters, RetrievedChunk
+
+
+INDEX_SCHEMA_VERSION = "2026-obsidian-rag-schema-1"
 
 
 class VectorStore:
     """Wrapper around a persistent ChromaDB collection."""
 
     def __init__(self, config: AppConfig) -> None:
+        self.db_path = config.chroma_db_path
         self.client = chromadb.PersistentClient(path=str(config.chroma_db_path))
         self.collection_name = config.chroma_collection_name
         self.collection = self.client.get_or_create_collection(name=self.collection_name)
+        self.version_file = self.db_path / ".index_schema_version"
 
     def reset(self) -> None:
         """Delete and recreate the configured collection."""
@@ -24,6 +30,7 @@ class VectorStore:
         except Exception:
             pass
         self.collection = self.client.get_or_create_collection(name=self.collection_name)
+        self.write_index_version(INDEX_SCHEMA_VERSION)
 
     def upsert_chunks(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
         """Persist chunk texts, embeddings, and metadata."""
@@ -47,6 +54,7 @@ class VectorStore:
                 for chunk in chunks
             ],
         )
+        self.write_index_version(INDEX_SCHEMA_VERSION)
 
     def query(
         self,
@@ -205,6 +213,22 @@ class VectorStore:
     def count(self) -> int:
         """Return the number of stored chunks."""
         return self.collection.count()
+
+    def is_index_compatible(self) -> bool:
+        """Return whether the stored index matches the current schema version."""
+        if self.count() == 0:
+            return True
+        return self.read_index_version() == INDEX_SCHEMA_VERSION
+
+    def read_index_version(self) -> str:
+        """Read the stored local index schema version."""
+        if not self.version_file.exists():
+            return ""
+        return self.version_file.read_text(encoding="utf-8").strip()
+
+    def write_index_version(self, version: str) -> None:
+        """Persist the local index schema version."""
+        self.version_file.write_text(version, encoding="utf-8")
 
 
 def _cosine_distance(left: list[float], right: list[float]) -> float:

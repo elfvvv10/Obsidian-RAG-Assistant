@@ -47,6 +47,24 @@ class SaveTemplateTests(unittest.TestCase):
             self.assertIn("## Sources", contents)
             self.assertIn("- They retrieve context.", contents)
 
+    def test_repeated_saves_use_deterministic_collision_suffixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir)
+            result = AnswerResult(
+                answer="Agents use tools to act.",
+                sources=["AI Agents (ai_agents.md)"],
+                retrieved_chunks=[],
+            )
+
+            first = save_answer(output_path, "What are AI agents?", result)
+            second = save_answer(output_path, "What are AI agents?", result)
+
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertNotEqual(first, second)
+            self.assertTrue(first.name.endswith("-answer.md"))
+            self.assertTrue(second.name.endswith("-answer-2.md"))
+
 
 class Phase4CLITests(unittest.TestCase):
     def test_main_ask_command_auto_saves_without_prompt_when_flag_used(self) -> None:
