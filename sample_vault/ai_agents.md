@@ -1,3 +1,8 @@
+---
+tags: [ai, agents, retrieval]
+category: research
+---
+
 # AI Agents
 
 AI agents combine reasoning, tools, and memory to complete tasks in a more goal-directed way than a single prompt-response interaction.
@@ -9,3 +14,5 @@ Key ideas:
 - Local-first agent tooling can improve privacy and reduce cloud dependence.
 
 In practical systems, retrieval quality matters as much as model quality.
+
+This note is about #agents and #ai.

@@ -71,6 +71,8 @@ class Note:
     path: str
     title: str
     content: str
+    frontmatter: dict[str, object] | None = None
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -86,6 +88,7 @@ class Chunk:
     heading_context: str = ""
     note_key: str = ""
     note_fingerprint: str = ""
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -112,6 +115,7 @@ class RetrievalFilters:
 
     folder: str | None = None
     path_contains: str | None = None
+    tag: str | None = None
 
 
 @dataclass(slots=True)
@@ -121,3 +125,4 @@ class RetrievalOptions:
     top_k: int | None = None
     candidate_count: int | None = None
     rerank: bool | None = None
+    boost_tags: tuple[str, ...] = ()

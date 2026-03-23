@@ -43,9 +43,15 @@ class Retriever:
             if options and options.rerank is not None
             else self.config.enable_reranking
         )
+        boost_tags = options.boost_tags if options else ()
 
         query_embedding = self.embedding_client.embed_text(query)
         chunks = self.vector_store.query(query_embedding, candidate_count, filters=filters)
-        if rerank_enabled:
-            chunks = rerank_chunks(query, chunks)
+        if rerank_enabled or boost_tags:
+            chunks = rerank_chunks(
+                query,
+                chunks,
+                boost_tags=boost_tags,
+                tag_boost_weight=self.config.tag_boost_weight,
+            )
         return chunks[:top_k]

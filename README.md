@@ -11,6 +11,7 @@ A local-first Python CLI that turns an Obsidian vault into a retrieval-augmented
 - Retrieves relevant note chunks for a question
 - Supports optional retrieval filters by folder and path text
 - Supports configurable chunk sizing, candidate retrieval depth, and optional reranking
+- Parses frontmatter and stores tags for filtering and boosting
 - Generates grounded answers with a local Ollama chat model
 - Shows source note references in the terminal
 - Optionally saves answers back into the vault as Markdown notes
@@ -48,6 +49,7 @@ Core modules:
 - `vector_store.py`: ChromaDB persistence
 - `retriever.py`: query embedding + candidate retrieval + optional reranking
 - `reranker.py`: lightweight heuristic reranking
+- `metadata_parser.py`: frontmatter and tag parsing helpers
 - `agent.py`: retrieval + answer orchestration
 - `saver.py`: save answer back to Markdown
 - `utils.py`: shared models and helpers
@@ -118,6 +120,7 @@ CHUNK_OVERLAP=150
 RETRIEVAL_CANDIDATE_MULTIPLIER=2
 CHUNKING_STRATEGY=markdown
 ENABLE_RERANKING=false
+TAG_BOOST_WEIGHT=3.0
 ```
 
 Variable notes:
@@ -134,6 +137,7 @@ Variable notes:
 - `RETRIEVAL_CANDIDATE_MULTIPLIER`: fetch more candidates before final selection
 - `CHUNKING_STRATEGY`: `markdown` or `sentence`
 - `ENABLE_RERANKING`: enable simple heuristic reranking by default
+- `TAG_BOOST_WEIGHT`: extra ranking weight for chunks whose tags match `--boost-tag`
 
 ## Index Your Notes
 
@@ -171,6 +175,8 @@ Optional filters:
 ```bash
 python main.py ask "What do my notes say about AI agents?" --folder projects
 python main.py ask "What do my notes say about AI agents?" --path-contains agents
+python main.py ask "What do my notes say about AI agents?" --tag ai
+python main.py ask "What do my notes say about AI agents?" --boost-tag agents --boost-tag local-ai
 python main.py ask "What do my notes say about AI agents?" --top-k 2 --candidate-count 6 --rerank
 ```
 

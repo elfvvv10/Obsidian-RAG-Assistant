@@ -50,3 +50,13 @@ class PromptFormattingTests(unittest.TestCase):
         self.assertIn("Path: notes/agents.md", prompt)
         self.assertIn("Relevance distance: 0.1235", prompt)
         self.assertIn("Content:", prompt)
+        self.assertIn("Tags: ai, agents", build_prompt("Q", [RetrievedChunk(
+            text="Tagged chunk",
+            metadata={
+                "note_title": "Agents",
+                "source_path": "notes/agents.md",
+                "heading_context": "Retrieval",
+                "tags_serialized": "ai|agents",
+            },
+            distance_or_score=0.1,
+        )]))

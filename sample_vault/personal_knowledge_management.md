@@ -1,3 +1,8 @@
+---
+tags: [pkm, notes, research]
+category: workflow
+---
+
 # Personal Knowledge Management
 
 My notes work best when they are small, clearly titled, and linked by theme.

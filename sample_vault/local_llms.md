@@ -1,3 +1,8 @@
+---
+tags: [ai, local, llm]
+category: infrastructure
+---
+
 # Local LLMs
 
 Running models locally can improve privacy, control, and offline access.

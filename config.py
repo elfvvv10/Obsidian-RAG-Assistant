@@ -27,6 +27,7 @@ class AppConfig:
     retrieval_candidate_multiplier: int = 2
     chunking_strategy: str = "markdown"
     enable_reranking: bool = False
+    tag_boost_weight: float = 3.0
     chroma_collection_name: str = "obsidian_notes"
     ollama_timeout_seconds: int = 60
 
@@ -55,6 +56,7 @@ def load_config() -> AppConfig:
         choices={"markdown", "sentence"},
     )
     enable_reranking = _bool_env("ENABLE_RERANKING", default=False)
+    tag_boost_weight = _required_float_env("TAG_BOOST_WEIGHT", default=3.0, minimum=0.0)
 
     ensure_directory(output_path)
     ensure_directory(chroma_path)
@@ -75,6 +77,7 @@ def load_config() -> AppConfig:
         retrieval_candidate_multiplier=retrieval_candidate_multiplier,
         chunking_strategy=chunking_strategy,
         enable_reranking=enable_reranking,
+        tag_boost_weight=tag_boost_weight,
     )
 
 
@@ -116,4 +119,16 @@ def _choice_env(name: str, *, default: str, choices: set[str]) -> str:
     value = os.getenv(name, default).strip().lower()
     if value not in choices:
         raise ValueError(f"{name} must be one of: {', '.join(sorted(choices))}. Received: {value}")
+    return value
+
+
+def _required_float_env(name: str, *, default: float, minimum: float) -> float:
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number. Received: {raw_value}") from exc
+
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}. Received: {value}")
     return value

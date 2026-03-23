@@ -41,6 +41,7 @@ class VectorStore:
                     "heading_context": chunk.heading_context,
                     "note_key": chunk.note_key,
                     "note_fingerprint": chunk.note_fingerprint,
+                    "tags_serialized": _serialize_tags(chunk.tags),
                 }
                 for chunk in chunks
             ],
@@ -53,7 +54,7 @@ class VectorStore:
         filters: RetrievalFilters | None = None,
     ) -> list[RetrievedChunk]:
         """Query the vector store and return retrieved chunks."""
-        if filters and filters.path_contains:
+        if filters and (filters.path_contains or filters.tag):
             return self._query_with_path_contains(query_embedding, top_k, filters)
 
         results = self.collection.query(
@@ -110,13 +111,17 @@ class VectorStore:
         top_k: int,
         filters: RetrievalFilters,
     ) -> list[RetrievedChunk]:
-        normalized_substring = filters.path_contains.lower()
+        normalized_substring = filters.path_contains.lower() if filters.path_contains else None
+        normalized_tag = filters.tag.lower() if filters.tag else None
         candidates = self.get_all_chunks(filters=RetrievalFilters(folder=filters.folder))
 
         filtered_candidates: list[RetrievedChunk] = []
         for document, metadata, embedding in candidates:
             source_path = str(metadata.get("source_path_normalized", "")).lower()
-            if normalized_substring not in source_path:
+            tags = _deserialize_tags(metadata.get("tags_serialized", ""))
+            if normalized_substring and normalized_substring not in source_path:
+                continue
+            if normalized_tag and normalized_tag not in tags:
                 continue
             filtered_candidates.append(
                 RetrievedChunk(
@@ -169,3 +174,13 @@ def _cosine_distance(left: list[float], right: list[float]) -> float:
         return 1.0
     similarity = numerator / (left_norm * right_norm)
     return 1 - similarity
+
+
+def _serialize_tags(tags: tuple[str, ...]) -> str:
+    return "|".join(tags)
+
+
+def _deserialize_tags(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str) or not value:
+        return ()
+    return tuple(part for part in value.split("|") if part)

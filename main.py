@@ -42,6 +42,8 @@ def main() -> int:
                 args.question,
                 folder=args.folder,
                 path_contains=args.path_contains,
+                tag=args.tag,
+                boost_tags=args.boost_tag,
                 top_k=args.top_k,
                 candidate_count=args.candidate_count,
                 rerank=args.rerank,
@@ -77,6 +79,16 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.add_argument(
         "--path-contains",
         help="Only retrieve notes whose path contains this text",
+    )
+    ask_parser.add_argument(
+        "--tag",
+        help="Only retrieve notes that contain this tag",
+    )
+    ask_parser.add_argument(
+        "--boost-tag",
+        action="append",
+        default=[],
+        help="Boost notes matching this tag during retrieval. Can be passed multiple times.",
     )
     ask_parser.add_argument(
         "--top-k",
@@ -170,6 +182,8 @@ def run_ask(
     *,
     folder: str | None = None,
     path_contains: str | None = None,
+    tag: str | None = None,
+    boost_tags: list[str] | None = None,
     top_k: int | None = None,
     candidate_count: int | None = None,
     rerank: bool = False,
@@ -190,11 +204,17 @@ def run_ask(
     filters = RetrievalFilters(
         folder=folder.strip().strip("/") if folder else None,
         path_contains=path_contains.strip().lower() if path_contains else None,
+        tag=tag.strip().lstrip("#").lower() if tag else None,
     )
     options = RetrievalOptions(
         top_k=top_k,
         candidate_count=candidate_count,
         rerank=True if rerank else None,
+        boost_tags=tuple(
+            tag_value.strip().lstrip("#").lower()
+            for tag_value in (boost_tags or [])
+            if tag_value.strip()
+        ),
     )
 
     logger.info("Retrieving relevant notes")

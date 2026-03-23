@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from metadata_parser import extract_tags, parse_markdown_metadata
 from utils import Note
 
 
@@ -13,16 +14,20 @@ def load_notes(vault_path: Path, excluded_paths: list[Path] | None = None) -> li
     excluded_paths = [path.resolve() for path in (excluded_paths or [])]
 
     for file_path in sorted(_iter_markdown_files(vault_path, excluded_paths)):
-        content = _read_text(file_path)
+        raw_content = _read_text(file_path)
+        frontmatter, content = parse_markdown_metadata(raw_content)
         if not content.strip():
             continue
 
         title = _extract_title(file_path, content)
+        tags = extract_tags(frontmatter, content)
         notes.append(
             Note(
                 path=str(file_path.relative_to(vault_path)),
                 title=title,
                 content=content.strip(),
+                frontmatter=frontmatter,
+                tags=tags,
             )
         )
 

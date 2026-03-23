@@ -48,6 +48,7 @@ def chunk_notes(
                     heading_context=chunk_info["heading_context"],
                     note_key=note_key,
                     note_fingerprint=note_fingerprint,
+                    tags=note.tags,
                 )
             )
 

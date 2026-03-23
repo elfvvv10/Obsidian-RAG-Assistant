@@ -37,6 +37,27 @@ class VaultLoaderTests(unittest.TestCase):
             self.assertEqual(len(notes), 1)
             self.assertEqual(notes[0].title, "Source")
 
+    def test_load_notes_parses_frontmatter_and_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vault = Path(tmp_dir)
+            (vault / "tagged.md").write_text(
+                "---\n"
+                "category: research\n"
+                "tags:\n"
+                "  - ai\n"
+                "  - agents\n"
+                "---\n\n"
+                "# Tagged Note\n\n"
+                "This note mentions #local-rag in the body.\n",
+                encoding="utf-8",
+            )
+
+            notes = load_notes(vault)
+
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0].frontmatter, {"category": "research", "tags": ["ai", "agents"]})
+            self.assertEqual(notes[0].tags, ("ai", "agents", "local-rag"))
+
 
 class ChunkerTests(unittest.TestCase):
     def test_chunk_notes_preserves_metadata(self) -> None:
