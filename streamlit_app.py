@@ -278,6 +278,11 @@ def _render_ask_tab(
                         key="workflow_role_of_key_elements",
                         help="What the kick, bass, lead, textures, or vocal should do in the track.",
                     )
+                    st.text_input(
+                        "Track Context Path",
+                        key="workflow_track_context_path",
+                        help="Vault-relative project folder or track_context.md path, for example Projects/Moonlit Driver or Projects/Moonlit Driver/track_context.md.",
+                    )
                 with input_col2:
                     st.text_input(
                         "BPM / Tempo",
@@ -980,6 +985,7 @@ def _current_workflow_input() -> WorkflowInput:
         energy_goal=st.session_state["workflow_energy_goal"],
         track_length=st.session_state["workflow_track_length"],
         role_of_key_elements=st.session_state["workflow_role_of_key_elements"],
+        track_context_path=st.session_state["workflow_track_context_path"],
     )
 
 
@@ -1009,6 +1015,7 @@ def _init_session_state(config: AppConfig) -> None:
         "workflow_energy_goal": "",
         "workflow_track_length": "",
         "workflow_role_of_key_elements": "",
+        "workflow_track_context_path": "",
         "max_subquestions": 3,
         "debug_mode": False,
         "last_query_response": None,

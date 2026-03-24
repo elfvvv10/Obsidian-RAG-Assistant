@@ -179,6 +179,7 @@ class WorkflowInput:
     energy_goal: str | None = None
     track_length: str | None = None
     role_of_key_elements: str | None = None
+    track_context_path: str | None = None
 
     def as_dict(self) -> dict[str, str]:
         """Return only filled workflow input fields."""
@@ -195,6 +196,7 @@ class WorkflowInput:
                 "energy_goal": self.energy_goal,
                 "track_length": self.track_length,
                 "role_of_key_elements": self.role_of_key_elements,
+                "track_context_path": self.track_context_path,
             }.items()
             if value and value.strip()
         }

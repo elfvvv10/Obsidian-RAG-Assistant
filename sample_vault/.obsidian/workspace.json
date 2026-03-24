@@ -182,6 +182,8 @@
   },
   "active": "8601edc6c0fd1433",
   "lastOpenFiles": [
+    "Projects/Current Tracks/Moonlit Driver/track_context.md",
+    "Projects/Current Tracks/Moonlit Driver",
     "Imports/YouTube Imports/2026-03-24-20-progressive-house-bass-patterns-tricks-that-cha.md",
     "Imports/Web Imports/2026-03-24-how-to-make-drum-bass-the-complete-guide-edmprod.md",
     "Research Sessions/2026-03-24-compare-my-notes-with-recent-external-co-answer-4.md",
@@ -205,7 +207,6 @@
     "Knowledge",
     "Research Sessions",
     "Imports/YouTube Imports",
-    "Imports/Web Imports",
     "research_answers/2026-03-24-what-recent-external-context-is-relevant-answer.md",
     "knowledge/Untitled.md",
     "research_answers/2026-03-24-compare-my-notes-with-recent-external-co-answer-2.md",
@@ -216,7 +217,6 @@
     "research_answers/2026-03-24-compare-my-notes-with-recent-external-co-answer-3.md",
     "research_answers/2026-03-24-compare-my-notes-with-recent-external-co-answer.md",
     "ai_agents.md",
-    "personal_knowledge_management.md",
-    "local_llms.md"
+    "personal_knowledge_management.md"
   ]
 }

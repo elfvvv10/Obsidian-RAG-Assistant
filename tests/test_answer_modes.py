@@ -200,3 +200,84 @@ class AnswerModePolicyTests(unittest.TestCase):
         self.assertIn("Collaboration workflow: genre_fit_review", prompt_payload.user_prompt)
         self.assertIn("Assess likely genre or style fit", prompt_payload.user_prompt)
         self.assertIn("Genre: breakbeat", prompt_payload.user_prompt)
+
+    def test_critique_workflow_prompt_encourages_implementation_coaching(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Track notes about weak transitions.",
+                    metadata={"note_title": "Track Notes", "source_path": "track.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        service.ask(
+            QueryRequest(
+                question="Critique this transition.",
+                collaboration_workflow=CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                workflow_input=WorkflowInput(genre="progressive house"),
+            )
+        )
+
+        prompt_payload = tracking["last_prompt"]
+        self.assertIsNotNone(prompt_payload)
+        self.assertIn("how to implement the change", prompt_payload.user_prompt)
+        self.assertIn("first pass", prompt_payload.user_prompt)
+        self.assertIn("what to listen for afterward", prompt_payload.user_prompt)
+        self.assertIn("why it matters", prompt_payload.user_prompt)
+
+    def test_arrangement_workflow_prompt_encourages_implementation_coaching(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Arrangement notes about low energy sections.",
+                    metadata={"note_title": "Arrangement", "source_path": "arrangement.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        service.ask(
+            QueryRequest(
+                question="Plan this arrangement.",
+                collaboration_workflow=CollaborationWorkflow.ARRANGEMENT_PLANNER,
+                workflow_input=WorkflowInput(track_length="6:00"),
+            )
+        )
+
+        prompt_payload = tracking["last_prompt"]
+        self.assertIsNotNone(prompt_payload)
+        self.assertIn("how to implement it in practical production terms", prompt_payload.user_prompt)
+        self.assertIn("minimal first pass", prompt_payload.user_prompt)
+        self.assertIn("what to listen for afterward", prompt_payload.user_prompt)
+
+    def test_non_critique_workflow_prompt_does_not_gain_coaching_contract(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Breakbeat note.",
+                    metadata={"note_title": "Breakbeat", "source_path": "breakbeat.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        service.ask(
+            QueryRequest(
+                question="Does this fit breakbeat?",
+                collaboration_workflow=CollaborationWorkflow.GENRE_FIT_REVIEW,
+                workflow_input=WorkflowInput(genre="breakbeat"),
+            )
+        )
+
+        prompt_payload = tracking["last_prompt"]
+        self.assertIsNotNone(prompt_payload)
+        self.assertNotIn("what to listen for afterward", prompt_payload.user_prompt)
+        self.assertNotIn("how to implement the change", prompt_payload.user_prompt)

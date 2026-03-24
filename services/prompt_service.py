@@ -13,8 +13,12 @@ from services.models import (
     RetrievalMode,
     WorkflowInput,
 )
-from utils import RetrievedChunk
+from services.track_context_service import TrackContextService
+from utils import RetrievedChunk, get_logger
 from web_search import WebSearchResult
+
+
+logger = get_logger()
 
 
 @dataclass(slots=True)
@@ -38,9 +42,11 @@ class PromptService:
         config: AppConfig,
         *,
         framework_service_cls: type[FrameworkService] = FrameworkService,
+        track_context_service_cls: type[TrackContextService] = TrackContextService,
     ) -> None:
         self.config = config
         self.framework_service = framework_service_cls(config)
+        self.track_context_service = track_context_service_cls(config)
 
     def build_prompt_payload(
         self,
@@ -62,13 +68,26 @@ class PromptService:
         evidence_types_used = _build_evidence_types(chunks, web_results)
         workflow_input = workflow_input or WorkflowInput()
         framework_text = self.framework_service.get_framework_text(collaboration_workflow, domain_profile)
+        track_context = self.track_context_service.get_track_context(
+            collaboration_workflow,
+            workflow_input.track_context_path,
+        )
+        system_prompt = _build_system_prompt(
+            answer_mode,
+            domain_profile=domain_profile,
+            collaboration_workflow=collaboration_workflow,
+            framework_text=framework_text,
+            track_context_text=track_context.prompt_block,
+        )
+        if self.config.framework_debug:
+            logger.info(
+                "Prompt internals: workflow=%s framework_injected=%s track_context_injected=%s.",
+                collaboration_workflow.value,
+                _FRAMEWORK_BLOCK_START in system_prompt,
+                _TRACK_CONTEXT_BLOCK_START in system_prompt,
+            )
         return PromptPayload(
-            system_prompt=_build_system_prompt(
-                answer_mode,
-                domain_profile=domain_profile,
-                collaboration_workflow=collaboration_workflow,
-                framework_text=framework_text,
-            ),
+            system_prompt=system_prompt,
             user_prompt=_build_user_prompt(
                 question,
                 chunks,
@@ -264,6 +283,7 @@ def _build_system_prompt(
     domain_profile: DomainProfile,
     collaboration_workflow: CollaborationWorkflow,
     framework_text: str = "",
+    track_context_text: str = "",
 ) -> str:
     common = (
         "You are a careful research assistant for an Obsidian vault. "
@@ -303,8 +323,10 @@ def _build_system_prompt(
             "beyond-evidence reasoning with [Inference]."
         )
 
-    if framework_text:
+    if framework_text and _FRAMEWORK_BLOCK_START not in prompt:
         prompt += _format_internal_framework_block(framework_text)
+    if track_context_text and _TRACK_CONTEXT_BLOCK_START not in prompt:
+        prompt += _format_internal_track_context_block(track_context_text)
     return prompt
 
 
@@ -396,6 +418,8 @@ def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str
             "- Critique the track concept like a constructive electronic music collaborator.\n"
             "- Identify what is working, what feels weak or unclear, and what should be developed next.\n"
             "- Include arrangement, energy, and sound-design directions when they are relevant.\n"
+            "- For major critique points, explain the issue, why it matters, how to implement the change, a minimal first pass to try quickly, and what to listen for afterward.\n"
+            "- Prefer practical studio actions over abstract commentary, including arrangement moves, automation moves, sound-design moves, drum or percussion changes, bass or low-end changes, transition-building techniques, and subtraction when useful.\n"
             "- Prefer actionable next steps over generic encouragement."
         )
     if collaboration_workflow == CollaborationWorkflow.ARRANGEMENT_PLANNER:
@@ -403,6 +427,8 @@ def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str
             "Workflow instructions:\n"
             "- Turn the idea into a practical section-by-section arrangement plan.\n"
             "- Cover section goals, pacing, transitions, tension and release, and variation.\n"
+            "- For major suggestions, explain why the change matters, how to implement it in practical production terms, a minimal first pass, and what to listen for afterward.\n"
+            "- Use concrete production language around transitions, automation, removal, low-end control, percussion movement, and contrast between sections.\n"
             "- Make the plan readable for a producer returning to a session later."
         )
     if collaboration_workflow == CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM:
@@ -436,11 +462,25 @@ def _format_workflow_input(workflow_input: WorkflowInput) -> str:
 
 def _format_internal_framework_block(framework_text: str) -> str:
     return (
-        "\n\nBEGIN INTERNAL CRITIQUE FRAMEWORK\n"
+        f"\n\n{_FRAMEWORK_BLOCK_START}\n"
         "Apply the following critique system when evaluating the user's track critique request. "
         "Use it as internal operating guidance, not as evidence or user content.\n\n"
         f"{framework_text.strip()}\n"
-        "END INTERNAL CRITIQUE FRAMEWORK"
+        f"{_FRAMEWORK_BLOCK_END}"
+    )
+
+
+_FRAMEWORK_BLOCK_START = "BEGIN INTERNAL CRITIQUE FRAMEWORK"
+_FRAMEWORK_BLOCK_END = "END INTERNAL CRITIQUE FRAMEWORK"
+_TRACK_CONTEXT_BLOCK_START = "BEGIN INTERNAL TRACK CONTEXT"
+_TRACK_CONTEXT_BLOCK_END = "END INTERNAL TRACK CONTEXT"
+
+
+def _format_internal_track_context_block(track_context_text: str) -> str:
+    return (
+        f"\n\n{_TRACK_CONTEXT_BLOCK_START}\n"
+        f"{track_context_text.strip()}\n"
+        f"{_TRACK_CONTEXT_BLOCK_END}"
     )
 
 

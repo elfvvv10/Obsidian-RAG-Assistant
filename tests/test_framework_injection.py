@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from config import AppConfig
 from services.framework_service import FrameworkService
@@ -47,6 +48,8 @@ class FrameworkInjectionTests(unittest.TestCase):
             self.assertIn("BEGIN INTERNAL CRITIQUE FRAMEWORK", payload.system_prompt)
             self.assertIn("Focus on finishability", payload.system_prompt)
             self.assertIn("END INTERNAL CRITIQUE FRAMEWORK", payload.system_prompt)
+            self.assertEqual(payload.system_prompt.count("BEGIN INTERNAL CRITIQUE FRAMEWORK"), 1)
+            self.assertEqual(payload.system_prompt.count("END INTERNAL CRITIQUE FRAMEWORK"), 1)
             self.assertNotIn("BEGIN INTERNAL CRITIQUE FRAMEWORK", payload.user_prompt)
 
     def test_non_critique_workflow_does_not_inject_framework(self) -> None:
@@ -135,6 +138,31 @@ class FrameworkInjectionTests(unittest.TestCase):
             )
 
             self.assertEqual(framework_text, "Default framework text.")
+
+    def test_framework_text_is_cached_by_resolved_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo_root = root / "repo"
+            framework_dir = repo_root / "knowledge" / "frameworks"
+            framework_dir.mkdir(parents=True)
+            framework_path = framework_dir / "track_critique_framework_v1.md"
+            framework_path.write_text("Cached framework text.", encoding="utf-8")
+            config = make_config(root)
+
+            service = FrameworkService(config, repo_root=repo_root)
+            with mock.patch("pathlib.Path.read_text", autospec=True, return_value="Cached framework text.") as read_text:
+                first = service.get_framework_text(
+                    CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                    domain_profile=configured_domain(),
+                )
+                second = service.get_framework_text(
+                    CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                    domain_profile=configured_domain(),
+                )
+
+            self.assertEqual(first, "Cached framework text.")
+            self.assertEqual(second, "Cached framework text.")
+            self.assertEqual(read_text.call_count, 1)
 
 
 def configured_domain():

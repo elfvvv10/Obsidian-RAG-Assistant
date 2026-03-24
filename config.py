@@ -48,6 +48,7 @@ class AppConfig:
     webpage_fetch_timeout_seconds: int = 15
     webpage_fetch_user_agent: str = "obsidian-rag-assistant/1.0"
     track_critique_framework_path: str = ""
+    framework_debug: bool = False
     chroma_collection_name: str = "obsidian_notes"
     ollama_timeout_seconds: int = 60
 
@@ -129,6 +130,7 @@ def load_config() -> AppConfig:
         "obsidian-rag-assistant/1.0",
     ).strip()
     track_critique_framework_path = os.getenv("TRACK_CRITIQUE_FRAMEWORK_PATH", "").strip()
+    framework_debug = _bool_env("FRAMEWORK_DEBUG", default=False)
 
     ensure_directory(output_path)
     ensure_directory(chroma_path)
@@ -170,6 +172,7 @@ def load_config() -> AppConfig:
         webpage_fetch_timeout_seconds=webpage_fetch_timeout_seconds,
         webpage_fetch_user_agent=webpage_fetch_user_agent,
         track_critique_framework_path=track_critique_framework_path,
+        framework_debug=framework_debug,
     )
 
 
