@@ -344,6 +344,7 @@ The UI includes four main areas:
 - `Ask`: question input, answer display, separate local/web sources, save actions, linked-note context, and an optional debug view of retrieval stages
 - `Ask`: when web search is attempted, the UI can also show the actual web query used, whether a retry was attempted, and a brief explanation when no web sources were included
 - `Ask`: when saved answers are indexed and used, they appear in a separate `Saved Answer Sources` section
+- `Ask`: a visible toggle directly under the question box lets you decide per question whether indexed saved answers should be included
 - `Ingest`: paste a webpage URL or YouTube URL, save it into the vault, and optionally trigger indexing right away
 - `Index`: readiness messages plus build and rebuild actions
 - `Settings / Debug`: active models, paths, app readiness, index compatibility, and the debug toggle

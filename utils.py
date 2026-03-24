@@ -132,3 +132,4 @@ class RetrievalOptions:
     rerank: bool | None = None
     boost_tags: tuple[str, ...] = ()
     include_linked_notes: bool | None = None
+    include_saved_answers: bool | None = None

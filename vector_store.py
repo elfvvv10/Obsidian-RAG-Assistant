@@ -63,10 +63,16 @@ class VectorStore:
         query_embedding: list[float],
         top_k: int,
         filters: RetrievalFilters | None = None,
+        include_saved_answers: bool | None = None,
     ) -> list[RetrievedChunk]:
         """Query the vector store and return retrieved chunks."""
-        if filters and (filters.path_contains or filters.tag):
-            return self._query_with_path_contains(query_embedding, top_k, filters)
+        if (filters and (filters.path_contains or filters.tag)) or include_saved_answers is False:
+            return self._query_with_post_filters(
+                query_embedding,
+                top_k,
+                filters or RetrievalFilters(),
+                include_saved_answers=include_saved_answers,
+            )
 
         results = self.collection.query(
             query_embeddings=[query_embedding],
@@ -99,6 +105,7 @@ class VectorStore:
     def get_all_chunks(
         self,
         filters: RetrievalFilters | None = None,
+        include_saved_answers: bool | None = None,
     ) -> list[tuple[str, dict[str, object], list[float]]]:
         """Return all chunk documents, metadata, and embeddings for filtered search."""
         results = self.collection.get(
@@ -112,6 +119,8 @@ class VectorStore:
         chunk_rows: list[tuple[str, dict[str, object], list[float]]] = []
         for document, metadata, embedding in zip(documents, metadatas, embeddings):
             if not document or not metadata or embedding is None:
+                continue
+            if include_saved_answers is False and _is_saved_answer_metadata(metadata):
                 continue
             chunk_rows.append((document, dict(metadata), list(embedding)))
         return chunk_rows
@@ -159,15 +168,20 @@ class VectorStore:
 
         return linked_chunks
 
-    def _query_with_path_contains(
+    def _query_with_post_filters(
         self,
         query_embedding: list[float],
         top_k: int,
         filters: RetrievalFilters,
+        *,
+        include_saved_answers: bool | None,
     ) -> list[RetrievedChunk]:
         normalized_substring = filters.path_contains.lower() if filters.path_contains else None
         normalized_tag = filters.tag.lower() if filters.tag else None
-        candidates = self.get_all_chunks(filters=RetrievalFilters(folder=filters.folder))
+        candidates = self.get_all_chunks(
+            filters=RetrievalFilters(folder=filters.folder),
+            include_saved_answers=include_saved_answers,
+        )
 
         filtered_candidates: list[RetrievedChunk] = []
         for document, metadata, embedding in candidates:
@@ -262,6 +276,10 @@ def _adjust_distance_for_source_kind(
     if str(metadata.get("source_kind", "")).strip().lower() == "saved_answer":
         return distance + SAVED_ANSWER_DISTANCE_PENALTY
     return distance
+
+
+def _is_saved_answer_metadata(metadata: dict[str, object]) -> bool:
+    return str(metadata.get("source_kind", "")).strip().lower() == "saved_answer"
 
 
 def _deserialize_tags(value: object) -> tuple[str, ...]:

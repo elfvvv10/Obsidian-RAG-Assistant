@@ -56,7 +56,12 @@ class Retriever:
             raise RuntimeError("The vector store is empty. Run `python main.py index` first.")
 
         settings = self._resolve_settings(options)
-        candidates = self._run_vector_retrieval(query, filters, settings["candidate_count"])
+        candidates = self._run_vector_retrieval(
+            query,
+            filters,
+            settings["candidate_count"],
+            settings["include_saved_answers"],
+        )
         ranked_chunks = self._apply_reranking(query, candidates, settings)
         primary_chunks = self._select_primary_chunks(ranked_chunks, settings["top_k"])
         final_chunks = self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"])
@@ -87,12 +92,18 @@ class Retriever:
             if options and options.include_linked_notes is not None
             else self.config.enable_linked_note_expansion
         )
+        include_saved_answers = (
+            options.include_saved_answers
+            if options and options.include_saved_answers is not None
+            else True
+        )
         boost_tags = options.boost_tags if options else ()
         return {
             "top_k": top_k,
             "candidate_count": candidate_count,
             "rerank_enabled": rerank_enabled,
             "include_linked_notes": include_linked_notes,
+            "include_saved_answers": include_saved_answers,
             "boost_tags": boost_tags,
         }
 
@@ -101,9 +112,24 @@ class Retriever:
         query: str,
         filters: RetrievalFilters | None,
         candidate_count: int,
+        include_saved_answers: bool,
     ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_client.embed_text(query)
-        return self.vector_store.query(query_embedding, candidate_count, filters=filters)
+        try:
+            return self.vector_store.query(
+                query_embedding,
+                candidate_count,
+                filters=filters,
+                include_saved_answers=include_saved_answers,
+            )
+        except TypeError as exc:
+            if "include_saved_answers" not in str(exc):
+                raise
+            return self.vector_store.query(
+                query_embedding,
+                candidate_count,
+                filters=filters,
+            )
 
     def _apply_reranking(
         self,

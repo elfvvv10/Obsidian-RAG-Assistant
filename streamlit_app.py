@@ -172,6 +172,20 @@ def _render_ask_tab(
             height=120,
         )
         st.session_state["question"] = question
+        with st.container(border=True):
+            st.markdown("#### Retrieval Scope")
+            st.session_state["use_saved_answers"] = st.toggle(
+                "Use saved answers for this question",
+                value=st.session_state["use_saved_answers"],
+                help="Include previously saved answer notes as secondary sources for this question only.",
+            )
+            if st.session_state["use_saved_answers"]:
+                if config.index_saved_answers:
+                    st.caption("Saved answers are enabled for this question and will be treated as secondary sources.")
+                else:
+                    st.warning(
+                        "Saved answers are not currently indexed. Enable `INDEX_SAVED_ANSWERS=true` and rebuild the index to use them here."
+                    )
 
     with save_col:
         st.markdown("### Save Options")
@@ -615,6 +629,7 @@ def _current_options() -> RetrievalOptions:
         top_k=st.session_state["top_k"],
         rerank=st.session_state["enable_reranking"],
         include_linked_notes=st.session_state["include_linked"],
+        include_saved_answers=st.session_state["use_saved_answers"],
     )
 
 
@@ -628,6 +643,7 @@ def _init_session_state(config: AppConfig) -> None:
         "top_k": config.top_k_results,
         "enable_reranking": config.enable_reranking,
         "include_linked": config.enable_linked_note_expansion,
+        "use_saved_answers": False,
         "auto_save": config.auto_save_answer,
         "retrieval_mode": RetrievalMode.LOCAL_ONLY.value,
         "answer_mode": AnswerMode.BALANCED.value,

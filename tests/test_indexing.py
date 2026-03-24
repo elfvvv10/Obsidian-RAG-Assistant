@@ -266,6 +266,61 @@ class IncrementalIndexingTests(unittest.TestCase):
 
         self.assertEqual(results[0].metadata["source_kind"], "primary_note")
 
+    def test_retriever_can_exclude_saved_answers_per_question(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                text="Saved synthesis about agents.",
+                metadata={
+                    "note_title": "Saved Answer",
+                    "source_path": "research_answers/saved.md",
+                    "source_kind": "saved_answer",
+                },
+                distance_or_score=0.05,
+            ),
+            RetrievedChunk(
+                text="Primary note about agents.",
+                metadata={
+                    "note_title": "Agents",
+                    "source_path": "agents.md",
+                    "source_kind": "primary_note",
+                },
+                distance_or_score=0.2,
+            ),
+        ]
+
+        class StubEmbeddingClient:
+            def embed_text(self, text: str) -> list[float]:
+                return [1.0, 0.0]
+
+        class StubVectorStore:
+            def count(self) -> int:
+                return 2
+
+            def query(
+                self,
+                query_embedding: list[float],
+                top_k: int,
+                filters=None,
+                include_saved_answers=None,
+            ) -> list[RetrievedChunk]:
+                if include_saved_answers is False:
+                    return [chunk for chunk in chunks if chunk.metadata["source_kind"] != "saved_answer"]
+                return list(chunks)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+            results = retriever.retrieve(
+                "agents",
+                options=RetrievalOptions(top_k=2, candidate_count=2, include_saved_answers=False),
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].metadata["source_kind"], "primary_note")
+
     def test_saved_answer_sources_use_saved_label(self) -> None:
         sources, _ = build_citation_sources(
             [
