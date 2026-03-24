@@ -23,9 +23,10 @@ A local-first Python Obsidian RAG assistant that runs through a CLI or a lightwe
 - Supports optional external web search as a separate evidence path
 - Supports webpage ingestion as a separate content-import workflow
 - Supports YouTube transcript ingestion as a separate content-import workflow
+- Separates draft/generated content from curated knowledge by folder and metadata
 - Optionally saves answers back into the vault as Markdown notes
 - Uses incremental indexing to update only changed notes
-- Excludes saved answers in the configured output folder from indexing by default when that folder lives inside the vault
+- Excludes draft answers, research sessions, and imported content from indexing by default
 - Can optionally index saved answers as secondary retrieval sources with distinct `[Saved N]` labels
 - Includes mocked tests, local smoke tests, and phase-focused module tests
 - Includes a sample vault for quick testing
@@ -151,7 +152,7 @@ Example `.env`:
 
 ```env
 OBSIDIAN_VAULT_PATH=./sample_vault
-OBSIDIAN_OUTPUT_PATH=./sample_vault/research_answers
+OBSIDIAN_OUTPUT_PATH=./sample_vault/draft_answers
 CHROMA_DB_PATH=./chroma_db
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_CHAT_MODEL=hermes3
@@ -168,6 +169,11 @@ MAX_LINKED_NOTES=2
 LINKED_NOTE_CHUNKS_PER_NOTE=1
 AUTO_SAVE_ANSWER=false
 INDEX_SAVED_ANSWERS=false
+RESEARCH_SESSIONS_FOLDER=research_sessions
+CURATED_KNOWLEDGE_FOLDER=knowledge
+INDEX_RESEARCH_SESSIONS=false
+INDEX_WEBPAGE_IMPORTS=false
+INDEX_YOUTUBE_IMPORTS=false
 WEB_SEARCH_PROVIDER=wikipedia
 WEB_SEARCH_API_URL=
 WEB_SEARCH_MAX_RESULTS=3
@@ -182,7 +188,7 @@ WEBPAGE_FETCH_USER_AGENT=obsidian-rag-assistant/1.0
 Variable notes:
 
 - `OBSIDIAN_VAULT_PATH`: path to the vault you want to index
-- `OBSIDIAN_OUTPUT_PATH`: where saved answer notes should be written
+- `OBSIDIAN_OUTPUT_PATH`: where direct saved answers and draft answers should be written
 - `CHROMA_DB_PATH`: directory for local ChromaDB storage
 - `OLLAMA_BASE_URL`: Ollama HTTP API base URL
 - `OLLAMA_CHAT_MODEL`: local chat model
@@ -198,7 +204,12 @@ Variable notes:
 - `MAX_LINKED_NOTES`: maximum linked notes to expand per question
 - `LINKED_NOTE_CHUNKS_PER_NOTE`: chunks to include from each linked note
 - `AUTO_SAVE_ANSWER`: save answers automatically without prompting
-- `INDEX_SAVED_ANSWERS`: when enabled, saved answers in the output folder are indexed as secondary derived notes
+- `INDEX_SAVED_ANSWERS`: when enabled, draft answers in `OBSIDIAN_OUTPUT_PATH` can be indexed as secondary derived notes
+- `RESEARCH_SESSIONS_FOLDER`: vault-relative folder for saved research workflow outputs
+- `CURATED_KNOWLEDGE_FOLDER`: preferred vault-relative home for intentionally curated notes
+- `INDEX_RESEARCH_SESSIONS`: when enabled, saved research workflow outputs are included in indexing
+- `INDEX_WEBPAGE_IMPORTS`: when enabled, webpage-import notes are included in indexing
+- `INDEX_YOUTUBE_IMPORTS`: when enabled, YouTube-import notes are included in indexing
 - `WEB_SEARCH_PROVIDER`: external search provider. `wikipedia` is the default no-key option. `duckduckgo` remains available as an alternative.
 - `WEB_SEARCH_API_URL`: optional provider endpoint override. Leave blank to use the provider default.
 - `WEB_SEARCH_MAX_RESULTS`: maximum number of external results to include
@@ -332,7 +343,7 @@ python main.py ingest-webpage "https://example.com/article"
 python main.py ingest-webpage "https://example.com/article" --title "Example Article" --index-now
 ```
 
-Saved webpage notes go into `WEBPAGE_INGESTION_FOLDER` inside your vault, which defaults to `ingested_webpages/`.
+Saved webpage notes go into `WEBPAGE_INGESTION_FOLDER` inside your vault, which defaults to `ingested_webpages/`. These imported notes are excluded from indexing by default so they can be reviewed before becoming part of your long-term knowledge base.
 
 Each saved note includes:
 
@@ -352,7 +363,7 @@ python main.py ingest-youtube "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 python main.py ingest-youtube "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --title "Example Video" --index-now
 ```
 
-Saved YouTube notes go into `YOUTUBE_INGESTION_FOLDER` inside your vault, which defaults to `ingested_youtube/`.
+Saved YouTube notes go into `YOUTUBE_INGESTION_FOLDER` inside your vault, which defaults to `ingested_youtube/`. These imported notes are also excluded from indexing by default unless you opt them in.
 
 Each saved note includes:
 
@@ -394,7 +405,7 @@ After each answer, the CLI prompts:
 Save this answer to your Obsidian output folder? (y/n):
 ```
 
-If you answer `y`, or if auto-save is enabled, the app creates a Markdown note containing:
+If you answer `y`, or if auto-save is enabled, the app creates a Markdown note in your draft answers folder containing:
 
 - The original question
 - A short summary
@@ -406,7 +417,9 @@ If you save the same question repeatedly, the app keeps existing notes and creat
 
 In the Streamlit UI, you can also provide an optional title override before saving. That title is used for the note heading and filename slug, while the underlying save logic stays the same.
 
-Saved answer notes also include lightweight frontmatter metadata such as `source_type: "saved_answer"`, the original question, and the save timestamp so they can be recognized safely later if you enable indexing for them.
+Saved answer notes also include lightweight frontmatter metadata such as `source_type`, `status`, `indexed`, `created_by`, `created_at`, the original question, and the save timestamp so they can be recognized safely later if you enable indexing for them.
+
+Research-mode saves go to `RESEARCH_SESSIONS_FOLDER` by default, and use similar metadata with `source_type: "research_session"` so they remain visible as draft workflow output rather than curated knowledge.
 
 ## Example Workflow
 
@@ -416,15 +429,28 @@ python main.py index
 python main.py ask "What themes recur in my product notes?"
 ```
 
-If you keep the sample settings, saved answers will appear in:
+If you keep the sample settings, direct saved answers will appear in:
 
 ```text
-sample_vault/research_answers/
+sample_vault/draft_answers/
 ```
 
-When `OBSIDIAN_OUTPUT_PATH` points to a folder inside the vault, saved answer notes in that folder are excluded from indexing by default so they do not pollute retrieval.
+The default trust-oriented folder layout is:
 
-If you enable `INDEX_SAVED_ANSWERS=true`, those saved notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
+```text
+sample_vault/
+├── draft_answers/
+├── research_sessions/
+├── ingested_webpages/
+├── ingested_youtube/
+└── knowledge/
+```
+
+By default, notes in the dedicated draft, research-session, and import folders are excluded from indexing so generated or imported material does not silently become durable knowledge.
+
+Curated knowledge is whatever you intentionally maintain outside those draft/import folders, with `CURATED_KNOWLEDGE_FOLDER` provided as a clear target for future promotion workflows.
+
+If you enable `INDEX_SAVED_ANSWERS=true`, those draft-answer notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
 
 ## Project Structure
 
@@ -609,6 +635,7 @@ This can happen after retrieval-relevant schema changes such as new metadata fie
 - Chunking is Markdown-aware but still heuristic rather than token-aware
 - Metadata filters are still intentionally simple: folder, path text, and tag-based controls only
 - Saved answers can be indexed as a secondary source and toggled per question in the UI, but they are still a lightweight derived-note feature rather than a full memo-management workflow
+- Imported webpages and YouTube transcripts are stored separately and excluded from indexing by default, but there is not yet a full review-and-promote workflow for turning them into curated knowledge
 - The Streamlit UI is intentionally lightweight and does not yet include persistent chat history or advanced source inspection workflows
 - The UI exposes retrieval/debug structure intended to support future features, but it is still intentionally simple
 - Research mode is intentionally bounded to a small number of explicit subquestions and does not yet support deeper branching, follow-up planning, or iterative revision

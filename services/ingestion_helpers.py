@@ -15,6 +15,8 @@ def build_ingested_markdown_note(
     source_url: str,
     content_heading: str,
     content: str,
+    status: str = "imported",
+    indexed: bool = False,
     extra_frontmatter: dict[str, str] | None = None,
     extra_metadata_lines: list[tuple[str, str]] | None = None,
 ) -> str:
@@ -23,7 +25,11 @@ def build_ingested_markdown_note(
     frontmatter_lines = [
         "---",
         f'title: "{escape_frontmatter(title)}"',
-        f"source_type: {source_type}",
+        f'source_type: "{escape_frontmatter(source_type)}"',
+        f'status: "{escape_frontmatter(status)}"',
+        f"indexed: {'true' if indexed else 'false'}",
+        'created_by: "obsidian_rag_assistant"',
+        f'created_at: "{timestamp}"',
         f'source_url: "{escape_frontmatter(source_url)}"',
         f'ingested_at: "{timestamp}"',
     ]

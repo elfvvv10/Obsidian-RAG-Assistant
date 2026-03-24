@@ -225,7 +225,14 @@ def run_ask(
         print(f"\nWarning: {warning}")
 
     if auto_save or config.auto_save_answer:
-        saved_path = save_answer(config.obsidian_output_path, question, response.answer_result)
+        saved_path = save_answer(
+            config.draft_answers_path,
+            question,
+            response.answer_result,
+            source_type="saved_answer",
+            status="draft",
+            indexed=False,
+        )
         logger.info("Saved answer to %s", saved_path)
     elif prompt_to_save():
         saved_response = query_service.save(question, response.answer_result)

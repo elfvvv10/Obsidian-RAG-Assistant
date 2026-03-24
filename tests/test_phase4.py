@@ -47,6 +47,10 @@ class SaveTemplateTests(unittest.TestCase):
             self.assertIn("## Sources", contents)
             self.assertIn("- They retrieve context.", contents)
             self.assertIn('source_type: "saved_answer"', contents)
+            self.assertIn('status: "draft"', contents)
+            self.assertIn("indexed: false", contents)
+            self.assertIn('created_by: "obsidian_rag_assistant"', contents)
+            self.assertIn('created_at: "', contents)
             self.assertIn('original_question: "What are AI agents?"', contents)
 
     def test_repeated_saves_use_deterministic_collision_suffixes(self) -> None:
@@ -103,6 +107,7 @@ class Phase4CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             prompt_mock.assert_not_called()
             save_mock.assert_called_once()
+            self.assertEqual(save_mock.call_args.args[0], config.draft_answers_path)
 
     def test_main_ask_command_auto_saves_when_config_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -139,3 +144,4 @@ class Phase4CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             prompt_mock.assert_not_called()
             save_mock.assert_called_once()
+            self.assertEqual(save_mock.call_args.args[0], config.draft_answers_path)

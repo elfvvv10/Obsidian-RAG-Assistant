@@ -26,12 +26,7 @@ class IndexService:
     def index(self, *, reset_store: bool) -> IndexResponse:
         """Build or rebuild the vector index."""
         logger.info("Loading notes from %s", self.config.obsidian_vault_path)
-        excluded_paths = []
-        if (
-            not self.config.index_saved_answers
-            and self.config.obsidian_output_path != self.config.obsidian_vault_path
-        ):
-            excluded_paths.append(self.config.obsidian_output_path)
+        excluded_paths = _build_excluded_paths(self.config)
 
         notes = load_notes(self.config.obsidian_vault_path, excluded_paths=excluded_paths)
         notes = _classify_saved_answer_notes(notes, self.config)
@@ -175,23 +170,49 @@ def _select_chunks_to_index(
 
 
 def _classify_saved_answer_notes(notes: list[Note], config: AppConfig) -> list[Note]:
-    if not config.index_saved_answers:
-        return notes
-
-    try:
-        output_relative = config.obsidian_output_path.resolve().relative_to(config.obsidian_vault_path.resolve())
-    except ValueError:
-        return notes
-
-    output_prefix = str(output_relative).replace("\\", "/").strip("/")
-    if not output_prefix:
-        return notes
-
     classified_notes: list[Note] = []
     for note in notes:
-        is_saved_answer = note.path == output_prefix or note.path.startswith(f"{output_prefix}/")
-        if is_saved_answer and note.source_kind != "saved_answer":
+        inferred_kind = _infer_folder_source_kind(note.path, config)
+        if inferred_kind != note.source_kind:
+            classified_notes.append(replace(note, source_kind=inferred_kind))
+            continue
+        if inferred_kind == "saved_answer" and note.source_kind != "saved_answer":
             classified_notes.append(replace(note, source_kind="saved_answer"))
         else:
             classified_notes.append(note)
     return classified_notes
+
+
+def _build_excluded_paths(config: AppConfig) -> list:
+    excluded_paths = []
+    candidate_paths = [
+        (config.draft_answers_path, config.index_saved_answers),
+        (config.research_sessions_path, config.index_research_sessions),
+        (config.webpage_ingestion_path, config.index_webpage_imports),
+        (config.youtube_ingestion_path, config.index_youtube_imports),
+    ]
+    for path, include_enabled in candidate_paths:
+        if include_enabled:
+            continue
+        if path == config.obsidian_vault_path:
+            continue
+        excluded_paths.append(path)
+    return excluded_paths
+
+
+def _infer_folder_source_kind(note_path: str, config: AppConfig) -> str:
+    derived_prefixes: list[str] = []
+    for path in (config.draft_answers_path, config.research_sessions_path):
+        try:
+            relative = path.resolve().relative_to(config.obsidian_vault_path.resolve())
+        except ValueError:
+            continue
+        prefix = str(relative).replace("\\", "/").strip("/")
+        if prefix:
+            derived_prefixes.append(prefix)
+
+    normalized = note_path.replace("\\", "/").strip("/")
+    for prefix in derived_prefixes:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return "saved_answer"
+    return "primary_note"

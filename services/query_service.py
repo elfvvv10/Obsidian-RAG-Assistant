@@ -168,10 +168,13 @@ class QueryService:
 
         if request.auto_save or self.config.auto_save_answer:
             saved_path = save_answer(
-                self.config.obsidian_output_path,
+                self.config.draft_answers_path,
                 request.question,
                 answer_result,
                 title_override=request.save_title,
+                source_type="saved_answer",
+                status="draft",
+                indexed=False,
             )
             logger.info("Saved answer to %s", saved_path)
 
@@ -231,10 +234,13 @@ class QueryService:
     ) -> QueryResponse:
         """Persist an existing answer result and return updated response info."""
         saved_path = save_answer(
-            self.config.obsidian_output_path,
+            self.config.draft_answers_path,
             question,
             answer_result,
             title_override=title_override,
+            source_type="saved_answer",
+            status="draft",
+            indexed=False,
         )
         logger.info("Saved answer to %s", saved_path)
         if existing_response is not None:

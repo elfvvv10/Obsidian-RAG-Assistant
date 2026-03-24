@@ -80,10 +80,13 @@ class ResearchService:
         saved_path = None
         if request.auto_save or self.config.auto_save_answer:
             saved_path = save_answer(
-                self.config.obsidian_output_path,
+                self.config.research_sessions_path,
                 request.goal,
                 final_answer_result,
                 title_override=request.save_title,
+                source_type="research_session",
+                status="research",
+                indexed=False,
             )
             logger.info("Saved research answer to %s", saved_path)
 
@@ -107,10 +110,13 @@ class ResearchService:
     ) -> ResearchResponse:
         """Persist an existing research answer result and preserve prior workflow state."""
         saved_path = save_answer(
-            self.config.obsidian_output_path,
+            self.config.research_sessions_path,
             goal,
             answer_result,
             title_override=title_override,
+            source_type="research_session",
+            status="research",
+            indexed=False,
         )
         logger.info("Saved research answer to %s", saved_path)
         if existing_response is not None:

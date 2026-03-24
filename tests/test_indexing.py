@@ -223,6 +223,59 @@ class IncrementalIndexingTests(unittest.TestCase):
 
             self.assertEqual(response.notes_loaded, 2)
 
+    def test_import_and_research_folders_remain_excluded_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            vault.mkdir()
+            (root / "output").mkdir()
+            (vault / "agents.md").write_text("# Agents\n\nPrimary note", encoding="utf-8")
+            (vault / "research_sessions").mkdir()
+            (vault / "research_sessions" / "session.md").write_text("# Session\n\nGenerated research output", encoding="utf-8")
+            (vault / "ingested_webpages").mkdir()
+            (vault / "ingested_webpages" / "page.md").write_text("# Page\n\nImported webpage", encoding="utf-8")
+            (vault / "ingested_youtube").mkdir()
+            (vault / "ingested_youtube" / "video.md").write_text("# Video\n\nImported transcript", encoding="utf-8")
+            config = make_config(root)
+
+            index_service = IndexService(config)
+            with patch(
+                "services.index_service.OllamaEmbeddingClient.embed_texts",
+                return_value=[[1.0, 0.0, 0.0]],
+            ):
+                response = index_service.index(reset_store=True)
+
+            self.assertEqual(response.notes_loaded, 1)
+
+    def test_import_folders_can_be_indexed_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            vault.mkdir()
+            (root / "output").mkdir()
+            (vault / "agents.md").write_text("# Agents\n\nPrimary note", encoding="utf-8")
+            (vault / "ingested_webpages").mkdir()
+            (vault / "ingested_webpages" / "page.md").write_text(
+                '---\nsource_type: "webpage_import"\n---\n\n# Page\n\nImported webpage',
+                encoding="utf-8",
+            )
+            (vault / "ingested_youtube").mkdir()
+            (vault / "ingested_youtube" / "video.md").write_text(
+                '---\nsource_type: "youtube_import"\n---\n\n# Video\n\nImported transcript',
+                encoding="utf-8",
+            )
+            config = make_config(root)
+            config = replace(config, index_webpage_imports=True, index_youtube_imports=True)
+
+            index_service = IndexService(config)
+            with patch(
+                "services.index_service.OllamaEmbeddingClient.embed_texts",
+                return_value=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            ):
+                response = index_service.index(reset_store=True)
+
+            self.assertEqual(response.notes_loaded, 3)
+
     def test_saved_answer_chunks_are_downranked_relative_to_primary_notes(self) -> None:
         chunks = [
             RetrievedChunk(

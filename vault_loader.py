@@ -73,6 +73,6 @@ def _extract_title(file_path: Path, content: str) -> str:
 
 def _infer_source_kind(frontmatter: dict[str, object]) -> str:
     source_type = str(frontmatter.get("source_type", "")).strip().lower()
-    if source_type == "saved_answer":
+    if source_type in {"saved_answer", "research_session"}:
         return "saved_answer"
     return "primary_note"

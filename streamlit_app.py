@@ -222,6 +222,10 @@ def _render_ask_tab(
 
     with save_col:
         st.markdown("### Save Options")
+        st.caption(
+            f"Direct answers save to `{ui_config.draft_answers_path}`. "
+            f"Research-mode saves go to `{ui_config.research_sessions_path}`."
+        )
         st.session_state["save_title"] = st.text_input(
             "Optional note title",
             value=st.session_state["save_title"],
@@ -455,13 +459,14 @@ def _render_research_response(
 def _render_ingest_tab(ingestion_service: IngestionService) -> None:
     st.caption(
         "Use ingestion to save external content into your vault as normal Markdown notes. "
-        "This is separate from query-time web search."
+        "This is separate from query-time web search, and imported notes are excluded from indexing by default."
     )
 
     webpage_col, youtube_col = st.columns(2)
 
     with webpage_col:
         st.subheader("Import a Webpage")
+        st.caption("Saved into the configured webpage-imports folder for later review or promotion.")
         st.session_state["ingest_url"] = st.text_input(
             "Webpage URL",
             value=st.session_state["ingest_url"],
@@ -502,6 +507,7 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
 
     with youtube_col:
         st.subheader("Import a YouTube Video")
+        st.caption("Saved into the configured YouTube-imports folder for later review or promotion.")
         st.session_state["youtube_url"] = st.text_input(
             "YouTube URL",
             value=st.session_state["youtube_url"],
@@ -725,13 +731,19 @@ def _render_settings_tab(config: AppConfig, status: IndexResponse | None, status
             st.caption(status_error)
     else:
         st.write(f"Vault path: `{status.vault_path}`")
-        st.write(f"Output path: `{status.output_path}`")
-        st.write(f"Webpage ingestion folder: `{config.webpage_ingestion_folder}`")
-        st.write(f"YouTube ingestion folder: `{config.youtube_ingestion_folder}`")
+        st.write(f"Draft answers path: `{config.draft_answers_path}`")
+        st.write(f"Research sessions path: `{config.research_sessions_path}`")
+        st.write(f"Curated knowledge folder: `{config.curated_knowledge_path}`")
+        st.write(f"Webpage imports folder: `{config.webpage_ingestion_path}`")
+        st.write(f"YouTube imports folder: `{config.youtube_ingestion_path}`")
         st.write(f"Index schema version: `{status.index_version or 'not set'}`")
         st.write(f"Stored chunks: `{status.total_chunks_stored}`")
         st.write(f"Index compatible: `{'yes' if status.index_compatible else 'no'}`")
         st.write(f"App ready: `{'yes' if status.ready else 'no'}`")
+        st.caption(
+            "By default, indexing excludes draft answers, research sessions, webpage imports, and YouTube imports. "
+            "Those folders can be enabled explicitly in config if you want them indexed."
+        )
 
     st.subheader("Advanced / Debug")
     st.session_state["debug_mode"] = st.checkbox(

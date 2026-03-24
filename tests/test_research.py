@@ -80,6 +80,19 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(tracking["synthesis_calls"], 0)
         self.assertTrue(any("Strict research mode limited" in warning for warning in response.warnings))
 
+    def test_research_save_uses_research_sessions_folder(self) -> None:
+        service, _ = make_research_service()
+        response = service.research(ResearchRequest(goal="Compare my notes on AI agents with recent external context"))
+
+        saved = service.save(response.goal, response.answer_result, existing_response=response)
+
+        self.assertIsNotNone(saved.saved_path)
+        self.assertIn("research_sessions", str(saved.saved_path))
+        contents = saved.saved_path.read_text(encoding="utf-8")
+        self.assertIn('source_type: "research_session"', contents)
+        self.assertIn('status: "research"', contents)
+        self.assertIn("indexed: false", contents)
+
 
 def make_research_service(
     *,

@@ -10,7 +10,7 @@ from utils import AnswerResult, current_timestamp, ensure_directory, slugify
 
 def prompt_to_save() -> bool:
     """Prompt the user to save the answer into the output folder."""
-    response = input("\nSave this answer to your Obsidian output folder? (y/n): ").strip().lower()
+    response = input("\nSave this answer to your Obsidian draft answers folder? (y/n): ").strip().lower()
     return response in {"y", "yes"}
 
 
@@ -20,6 +20,9 @@ def save_answer(
     result: AnswerResult,
     *,
     title_override: str | None = None,
+    source_type: str = "saved_answer",
+    status: str = "draft",
+    indexed: bool = False,
 ) -> Path:
     """Write the answer and sources to a markdown file."""
     ensure_directory(output_path)
@@ -29,12 +32,27 @@ def save_answer(
     file_name = f"{date_prefix}-{slugify(title_for_slug, max_length=40)}-answer.md"
     destination = _unique_destination(output_path / file_name)
 
-    body = _build_markdown(question, result, title_override=title_override)
+    body = _build_markdown(
+        question,
+        result,
+        title_override=title_override,
+        source_type=source_type,
+        status=status,
+        indexed=indexed,
+    )
     destination.write_text(body, encoding="utf-8")
     return destination
 
 
-def _build_markdown(question: str, result: AnswerResult, *, title_override: str | None = None) -> str:
+def _build_markdown(
+    question: str,
+    result: AnswerResult,
+    *,
+    title_override: str | None = None,
+    source_type: str,
+    status: str,
+    indexed: bool,
+) -> str:
     sources = "\n".join(f"- {source}" for source in result.sources) or "- No sources available"
     summary = _build_summary(result.answer)
     key_points = _build_key_points(result.answer)
@@ -44,7 +62,11 @@ def _build_markdown(question: str, result: AnswerResult, *, title_override: str 
 
     return (
         "---\n"
-        f'source_type: "saved_answer"\n'
+        f'source_type: "{_escape_frontmatter(source_type)}"\n'
+        f'status: "{_escape_frontmatter(status)}"\n'
+        f"indexed: {'true' if indexed else 'false'}\n"
+        'created_by: "obsidian_rag_assistant"\n'
+        f'created_at: "{timestamp}"\n'
         f'original_question: "{_escape_frontmatter(question)}"\n'
         f'saved_at: "{timestamp}"\n'
         "---\n\n"

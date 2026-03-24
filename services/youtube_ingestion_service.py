@@ -38,14 +38,16 @@ class YouTubeIngestionService:
             raise RuntimeError("Transcript retrieval returned no usable content for this YouTube video.")
 
         title = request.title_override.strip() if request.title_override else self._fetch_title(url, video_id)
-        output_dir = self.config.obsidian_vault_path / self.config.youtube_ingestion_folder
+        output_dir = self.config.youtube_ingestion_path
         destination = make_ingestion_destination(output_dir, title)
         body = build_ingested_markdown_note(
             title=title,
-            source_type="youtube",
+            source_type="youtube_import",
             source_url=url,
             content_heading="Transcript",
             content=transcript,
+            status="imported",
+            indexed=False,
             extra_frontmatter={"youtube_video_id": video_id},
             extra_metadata_lines=[("Video ID", video_id)],
         )

@@ -33,6 +33,11 @@ class AppConfig:
     linked_note_chunks_per_note: int = 1
     auto_save_answer: bool = False
     index_saved_answers: bool = False
+    research_sessions_folder: str = "research_sessions"
+    curated_knowledge_folder: str = "knowledge"
+    index_research_sessions: bool = False
+    index_webpage_imports: bool = False
+    index_youtube_imports: bool = False
     web_search_provider: str = "wikipedia"
     web_search_api_url: str = ""
     web_search_max_results: int = 3
@@ -44,6 +49,31 @@ class AppConfig:
     webpage_fetch_user_agent: str = "obsidian-rag-assistant/1.0"
     chroma_collection_name: str = "obsidian_notes"
     ollama_timeout_seconds: int = 60
+
+    @property
+    def draft_answers_path(self) -> Path:
+        """Return the path used for direct saved answers."""
+        return self.obsidian_output_path
+
+    @property
+    def research_sessions_path(self) -> Path:
+        """Return the path used for saved research workflow outputs."""
+        return self.obsidian_vault_path / self.research_sessions_folder
+
+    @property
+    def curated_knowledge_path(self) -> Path:
+        """Return the preferred curated-knowledge target folder inside the vault."""
+        return self.obsidian_vault_path / self.curated_knowledge_folder
+
+    @property
+    def webpage_ingestion_path(self) -> Path:
+        """Return the webpage-import folder path inside the vault."""
+        return self.obsidian_vault_path / self.webpage_ingestion_folder
+
+    @property
+    def youtube_ingestion_path(self) -> Path:
+        """Return the YouTube-import folder path inside the vault."""
+        return self.obsidian_vault_path / self.youtube_ingestion_folder
 
 
 def load_config() -> AppConfig:
@@ -76,6 +106,11 @@ def load_config() -> AppConfig:
     linked_note_chunks_per_note = _required_int_env("LINKED_NOTE_CHUNKS_PER_NOTE", default=1, minimum=1)
     auto_save_answer = _bool_env("AUTO_SAVE_ANSWER", default=False)
     index_saved_answers = _bool_env("INDEX_SAVED_ANSWERS", default=False)
+    research_sessions_folder = _relative_folder_env("RESEARCH_SESSIONS_FOLDER", default="research_sessions")
+    curated_knowledge_folder = _relative_folder_env("CURATED_KNOWLEDGE_FOLDER", default="knowledge")
+    index_research_sessions = _bool_env("INDEX_RESEARCH_SESSIONS", default=False)
+    index_webpage_imports = _bool_env("INDEX_WEBPAGE_IMPORTS", default=False)
+    index_youtube_imports = _bool_env("INDEX_YOUTUBE_IMPORTS", default=False)
     web_search_provider = _choice_env(
         "WEB_SEARCH_PROVIDER",
         default="wikipedia",
@@ -118,6 +153,11 @@ def load_config() -> AppConfig:
         linked_note_chunks_per_note=linked_note_chunks_per_note,
         auto_save_answer=auto_save_answer,
         index_saved_answers=index_saved_answers,
+        research_sessions_folder=research_sessions_folder,
+        curated_knowledge_folder=curated_knowledge_folder,
+        index_research_sessions=index_research_sessions,
+        index_webpage_imports=index_webpage_imports,
+        index_youtube_imports=index_youtube_imports,
         web_search_provider=web_search_provider,
         web_search_api_url=web_search_api_url,
         web_search_max_results=web_search_max_results,

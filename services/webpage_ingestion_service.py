@@ -36,16 +36,18 @@ class WebpageIngestionService:
         if not title:
             title = fallback_title_from_url(url, default_host="webpage")
 
-        output_dir = self.config.obsidian_vault_path / self.config.webpage_ingestion_folder
+        output_dir = self.config.webpage_ingestion_path
         ensure_directory(output_dir)
         destination = make_ingestion_destination(output_dir, title)
 
         body = build_ingested_markdown_note(
             title=title,
-            source_type="webpage",
+            source_type="webpage_import",
             source_url=url,
             content_heading="Extracted Content",
             content=extracted["content"],
+            status="imported",
+            indexed=False,
         )
         destination.write_text(body, encoding="utf-8")
 
