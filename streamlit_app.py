@@ -8,6 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from config import AppConfig, load_config
+from llm import list_available_chat_models
 from services.ingestion_service import IngestionService
 from services.index_service import IndexService
 from services.music_workflow_service import MusicWorkflowService
@@ -215,6 +216,9 @@ def _render_ask_tab(
         st.session_state["session_tasks"] = []
         st.session_state["last_query_response"] = None
         st.session_state["last_question"] = ""
+        st.session_state["active_chat_model"] = config.ollama_chat_model
+        st.session_state["active_chat_model_select"] = config.ollama_chat_model
+        st.session_state["active_chat_model_input"] = config.ollama_chat_model
         st.session_state["reset_ask_form"] = False
 
     if status is not None:
@@ -231,6 +235,7 @@ def _render_ask_tab(
 
     answer_mount = None
     chat_detail_mount = None
+    available_chat_models, chat_model_discovery_error = list_available_chat_models(config)
 
     main_col, control_col = st.columns([3, 1.4], gap="large")
     with control_col:
@@ -306,7 +311,33 @@ def _render_ask_tab(
                 key="save_title",
                 help="Override the saved note title and filename slug.",
             )
-            st.form_submit_button("Update Workspace", use_container_width=True)
+            if available_chat_models:
+                model_options = list(available_chat_models)
+                current_model = st.session_state.get("active_chat_model", config.ollama_chat_model)
+                if current_model not in model_options:
+                    model_options.insert(0, current_model)
+                st.selectbox(
+                    "Active Chat Model",
+                    options=model_options,
+                    index=model_options.index(current_model),
+                    key="active_chat_model_select",
+                    help="Session-level chat model override for comparing local Ollama models.",
+                )
+            else:
+                st.text_input(
+                    "Active Chat Model",
+                    key="active_chat_model_input",
+                    help="Session-level chat model override when live model discovery is unavailable.",
+                )
+            workspace_updated = st.form_submit_button("Update Workspace", use_container_width=True)
+
+        if workspace_updated:
+            selected_chat_model = (
+                st.session_state.get("active_chat_model_select", "").strip()
+                if available_chat_models
+                else st.session_state.get("active_chat_model_input", "").strip()
+            ) or config.ollama_chat_model
+            st.session_state["active_chat_model"] = selected_chat_model
 
         if st.session_state["retrieval_scope"] == RetrievalScope.KNOWLEDGE.value:
             st.caption(
@@ -316,6 +347,12 @@ def _render_ask_tab(
             st.caption(
                 "Extended searches Knowledge, plus indexed working notes, Drafts, and Research Sessions."
             )
+        if available_chat_models:
+            st.caption(f"Current session model: `{st.session_state['active_chat_model']}`")
+        else:
+            st.caption(f"Current session model: `{st.session_state['active_chat_model']}`")
+            if chat_model_discovery_error:
+                st.caption(f"Model discovery unavailable: {chat_model_discovery_error}")
 
         if st.button("Reset Session", use_container_width=True):
             clear_clicked = True
@@ -407,6 +444,7 @@ def _render_ask_tab(
                     answer_mode=st.session_state["answer_mode"],
                     collaboration_workflow=st.session_state["collaboration_workflow"],
                     workflow_input=_current_workflow_input(),
+                    chat_model_override=st.session_state["active_chat_model"],
                     recent_conversation=_recent_conversation_for_prompt(
                         chat_messages[:-1] if chat_workspace_enabled else [],
                         st.session_state["collaboration_workflow"],
@@ -429,6 +467,7 @@ def _render_ask_tab(
                             answer_mode=request.answer_mode,
                             collaboration_workflow=st.session_state["collaboration_workflow"],
                             workflow_input=request.workflow_input,
+                            chat_model_override=request.chat_model_override,
                             max_subquestions=st.session_state["max_subquestions"],
                         )
                     )
@@ -464,6 +503,9 @@ def _render_ask_tab(
     with answer_mount:
         st.markdown("### Latest Answer")
         with st.container(border=True):
+            st.caption(
+                f"Active chat model: `{response.debug.active_chat_model or st.session_state['active_chat_model']}`"
+            )
             st.write(response.answer)
 
     detail_parent = chat_detail_mount if chat_workspace_enabled and chat_detail_mount is not None else st.container()
@@ -588,6 +630,8 @@ def _render_research_response(
     response: ResearchResponse,
     research_service: ResearchService,
 ) -> None:
+    if response.active_chat_model:
+        st.caption(f"Active chat model: `{response.active_chat_model}`")
     for warning in response.warnings:
         st.warning(warning)
 
@@ -820,6 +864,7 @@ def _render_debug_section(response: QueryResponse) -> None:
                 "imported_knowledge_chunks": response.debug.imported_knowledge_chunks,
                 "non_curated_note_chunks": response.debug.non_curated_note_chunks,
                 "generated_or_imported_chunks": response.debug.generated_or_imported_chunks,
+                "active_chat_model": response.debug.active_chat_model,
                 "local_retrieval_weak": response.debug.local_retrieval_weak,
                 "reranking_applied": response.debug.reranking_applied,
                 "evidence_types_used": list(response.debug.evidence_types_used),
@@ -1181,6 +1226,9 @@ def _init_session_state(config: AppConfig) -> None:
         "path_filter": "",
         "tag_filter": "",
         "save_title": "",
+        "active_chat_model": config.ollama_chat_model,
+        "active_chat_model_select": config.ollama_chat_model,
+        "active_chat_model_input": config.ollama_chat_model,
         "top_k": config.top_k_results,
         "enable_reranking": config.enable_reranking,
         "include_linked": config.enable_linked_note_expansion,

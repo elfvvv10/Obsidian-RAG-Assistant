@@ -10,7 +10,7 @@ from requests.exceptions import RequestException
 
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
-from llm import OllamaChatClient
+from llm import OllamaChatClient, list_available_chat_models
 
 
 def make_config() -> AppConfig:
@@ -70,6 +70,20 @@ class OllamaEmbeddingClientTests(unittest.TestCase):
 
 
 class OllamaChatClientTests(unittest.TestCase):
+    def test_chat_client_uses_model_override(self) -> None:
+        client = OllamaChatClient(make_config(), model_override="deepseek-r1")
+        self.assertEqual(client.model, "deepseek-r1")
+
+    def test_list_available_chat_models_returns_names(self) -> None:
+        with patch(
+            "llm.requests.request",
+            return_value=FakeResponse(200, {"models": [{"name": "hermes3"}, {"name": "deepseek-r1:latest"}]}),
+        ):
+            models, error = list_available_chat_models(make_config())
+
+        self.assertEqual(models, ["deepseek-r1:latest", "hermes3"])
+        self.assertIsNone(error)
+
     def test_answer_question_success(self) -> None:
         client = OllamaChatClient(make_config())
 

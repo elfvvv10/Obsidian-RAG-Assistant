@@ -107,17 +107,38 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn("Domain profile: electronic_music", tracking["last_plan_prompt"])
         self.assertIn("Genre: melodic techno", tracking["last_plan_prompt"])
 
+    def test_research_uses_chat_model_override_for_planning_and_steps(self) -> None:
+        service, tracking = make_research_service()
+
+        response = service.research(
+            ResearchRequest(
+                goal="Compare my notes on AI agents with recent external context",
+                chat_model_override="deepseek-r1",
+            )
+        )
+
+        self.assertEqual(tracking["last_model"], "deepseek-r1")
+        self.assertEqual(tracking["last_query_model_override"], "deepseek-r1")
+        self.assertEqual(response.active_chat_model, "deepseek-r1")
+
 
 def make_research_service(
     *,
     synthesis_text: str = "[Local 1] My notes say agents use tools. [Web 1] adds recent context.",
     all_weak: bool = False,
 ) -> tuple[ResearchService, dict[str, int]]:
-    tracking = {"plan_calls": 0, "synthesis_calls": 0, "query_calls": 0, "last_plan_prompt": ""}
+    tracking = {
+        "plan_calls": 0,
+        "synthesis_calls": 0,
+        "query_calls": 0,
+        "last_plan_prompt": "",
+        "last_model": "",
+        "last_query_model_override": "",
+    }
 
     class StubChatClient:
-        def __init__(self, config: AppConfig) -> None:
-            pass
+        def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
+            tracking["last_model"] = model_override or config.ollama_chat_model
 
         def answer_with_prompt(self, prompt_payload):
             if "Generate" in prompt_payload.user_prompt and "subquestions" in prompt_payload.user_prompt:
@@ -136,6 +157,7 @@ def make_research_service(
 
         def ask(self, request):
             tracking["query_calls"] += 1
+            tracking["last_query_model_override"] = request.chat_model_override or ""
             weak_distance = 0.95 if all_weak else 0.15
             if "external context" in request.question.lower():
                 return QueryResponse(

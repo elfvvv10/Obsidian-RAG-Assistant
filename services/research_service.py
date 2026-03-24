@@ -50,7 +50,11 @@ class ResearchService:
         """Run a bounded multi-step research workflow and return structured results."""
         query_service = self.query_service_cls(self.config)
         prompt_service = self.prompt_service_cls(self.config)
-        chat_client = self.chat_client_cls(self.config)
+        chat_client = _build_chat_client(
+            self.chat_client_cls,
+            self.config,
+            model_override=request.chat_model_override,
+        )
         workflow_plan = self.music_workflow_service.build_research_plan(request)
 
         subquestions, planning_notes = self._generate_subquestions(
@@ -76,6 +80,7 @@ class ResearchService:
                     domain_profile=request.domain_profile,
                     collaboration_workflow=request.collaboration_workflow,
                     workflow_input=request.workflow_input,
+                    chat_model_override=request.chat_model_override,
                 )
             )
             steps.append(ResearchStepResult(subquestion=subquestion, response=step_response))
@@ -116,6 +121,7 @@ class ResearchService:
             warnings=warnings,
             saved_path=saved_path,
             planning_notes=planning_notes,
+            active_chat_model=getattr(chat_client, "model", self.config.ollama_chat_model),
             domain_profile=request.domain_profile,
             collaboration_workflow=request.collaboration_workflow,
             workflow_input=request.workflow_input,
@@ -161,6 +167,9 @@ class ResearchService:
             steps=[],
             answer_result=answer_result,
             saved_path=saved_path,
+            active_chat_model=(
+                existing_response.active_chat_model if existing_response is not None else ""
+            ),
             domain_profile=(
                 existing_response.domain_profile
                 if existing_response is not None
@@ -177,7 +186,6 @@ class ResearchService:
                 else WorkflowInput()
             ),
         )
-
     def _generate_subquestions(
         self,
         goal: str,
@@ -276,6 +284,25 @@ class ResearchService:
             ),
             [],
         )
+
+
+def _build_chat_client(
+    chat_client_cls: type[OllamaChatClient],
+    config: AppConfig,
+    *,
+    model_override: str | None,
+) -> OllamaChatClient:
+    """Instantiate a chat client with optional model override and test-stub compatibility."""
+    if model_override:
+        try:
+            client = chat_client_cls(config, model_override=model_override)
+            setattr(client, "model", model_override)
+            return client
+        except TypeError:
+            client = chat_client_cls(config)
+            setattr(client, "model", model_override)
+            return client
+    return chat_client_cls(config)
 
 
 def _parse_subquestions(raw_plan: str, *, max_subquestions: int) -> list[str]:

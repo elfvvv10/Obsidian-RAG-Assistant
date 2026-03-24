@@ -72,7 +72,11 @@ class QueryService:
 
         embedding_client = self.embedding_client_cls(self.config)
         retriever = self.retriever_cls(self.config, embedding_client, vector_store)
-        chat_client = self.chat_client_cls(self.config)
+        chat_client = _build_chat_client(
+            self.chat_client_cls,
+            self.config,
+            model_override=request.chat_model_override,
+        )
         web_search_service = self.web_search_service_cls(self.config)
         prompt_service = self.prompt_service_cls(self.config)
         web_alignment_service = self.web_alignment_service_cls()
@@ -231,6 +235,7 @@ class QueryService:
                 imported_knowledge_chunks=trust_counts["imported_knowledge"],
                 non_curated_note_chunks=trust_counts["non_curated_note"],
                 generated_or_imported_chunks=trust_counts["generated_or_imported"],
+                active_chat_model=getattr(chat_client, "model", self.config.ollama_chat_model),
                 hallucination_guard_warnings=tuple(
                     _build_guard_warnings(
                         answer_result=answer_result,
@@ -246,7 +251,6 @@ class QueryService:
             collaboration_workflow=request.collaboration_workflow,
             workflow_input=request.workflow_input,
         )
-
     def save(
         self,
         question: str,
@@ -504,6 +508,25 @@ class QueryService:
             results_discarded_by_filter=filtered_count > 0,
             outcome="usable_results",
         )
+
+
+def _build_chat_client(
+    chat_client_cls: type[OllamaChatClient],
+    config: AppConfig,
+    *,
+    model_override: str | None,
+) -> OllamaChatClient:
+    """Instantiate a chat client with optional model override and test-stub compatibility."""
+    if model_override:
+        try:
+            client = chat_client_cls(config, model_override=model_override)
+            setattr(client, "model", model_override)
+            return client
+        except TypeError:
+            client = chat_client_cls(config)
+            setattr(client, "model", model_override)
+            return client
+    return chat_client_cls(config)
 
 
 def _build_answer_result(

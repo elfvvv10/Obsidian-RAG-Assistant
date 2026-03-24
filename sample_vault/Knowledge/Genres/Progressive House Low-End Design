@@ -1,0 +1,105 @@
+---
+type: "genre_playbook"
+domain: "electronic_music"
+genre: "progressive_house"
+topic: "low_end_design"
+tags: ["progressive house", "bass", "mixing", "sound design"]
+---
+
+# Progressive House Low-End Design
+
+## Overview
+The low end in progressive house should be clean, controlled, and powerful without being overwhelming.
+
+---
+
+## 1. Sub Bass Design
+
+### Sound
+- Sine wave or very clean waveform
+
+### Characteristics
+- Mono
+- Stable and consistent
+- Minimal modulation
+
+### Role
+- Provides weight and foundation
+
+---
+
+## 2. Mid-Bass Layer
+
+### Sound
+- Filtered saw, pluck, or textured synth
+
+### Characteristics
+- Adds presence and character
+- Often lightly saturated
+
+### Role
+- Makes bass audible on smaller speakers
+
+---
+
+## 3. Separation of Roles
+
+### Rule
+- Sub = weight
+- Mid = character
+
+### Avoid
+- Blurring both roles into one sound
+- Over-layering low frequencies
+
+---
+
+## 4. Sidechain Compression
+
+### Purpose
+- Create space for the kick
+- Enhance groove
+
+### Approach
+- Strong, noticeable pumping is acceptable
+- Timing must match kick precisely
+
+---
+
+## 5. EQ and Space
+
+### Sub
+- Keep below ~100 Hz clean
+- Avoid stereo information
+
+### Mid-Bass
+- High-pass to avoid clashing with sub
+- Shape around kick frequencies
+
+---
+
+## 6. Movement Through Filtering
+
+### Technique
+- Automate filter cutoff over time
+
+### Result
+- Perceived evolution without changing notes
+
+---
+
+## What to Avoid
+
+- Distorted sub frequencies
+- Stereo sub bass
+- Muddy overlapping layers
+- Overpowering low-end masking other elements
+
+---
+
+## Key Principle
+
+A good progressive house low end:
+- feels powerful but controlled
+- supports the groove
+- translates well across systems

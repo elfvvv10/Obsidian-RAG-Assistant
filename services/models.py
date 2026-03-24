@@ -211,6 +211,7 @@ class QueryRequest:
     options: RetrievalOptions = field(default_factory=RetrievalOptions)
     auto_save: bool = False
     save_title: str | None = None
+    chat_model_override: str | None = None
     retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE
     retrieval_mode: RetrievalMode = RetrievalMode.AUTO
     answer_mode: AnswerMode = AnswerMode.BALANCED
@@ -283,6 +284,7 @@ class QueryDebugInfo:
     imported_knowledge_chunks: int = 0
     non_curated_note_chunks: int = 0
     generated_or_imported_chunks: int = 0
+    active_chat_model: str = ""
 
 
 @dataclass(slots=True)
@@ -385,6 +387,7 @@ class ResearchRequest:
     max_subquestions: int = 3
     auto_save: bool = False
     save_title: str | None = None
+    chat_model_override: str | None = None
     domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
     collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.RESEARCH_SESSION
     workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
@@ -418,6 +421,7 @@ class ResearchResponse:
     warnings: list[str] = field(default_factory=list)
     saved_path: Path | None = None
     planning_notes: list[str] = field(default_factory=list)
+    active_chat_model: str = ""
     domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
     collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.RESEARCH_SESSION
     workflow_input: WorkflowInput = field(default_factory=WorkflowInput)

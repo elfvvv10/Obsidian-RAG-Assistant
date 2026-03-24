@@ -31,15 +31,15 @@ def make_query_service(
     web_results: list[WebSearchResult],
     answer_text: str,
 ) -> tuple[QueryService, dict[str, object]]:
-    tracking: dict[str, object] = {"chat_calls": 0, "last_prompt": None}
+    tracking: dict[str, object] = {"chat_calls": 0, "last_prompt": None, "last_model": None}
 
     class StubEmbeddingClient:
         def __init__(self, config: AppConfig) -> None:
             pass
 
     class StubChatClient:
-        def __init__(self, config: AppConfig) -> None:
-            pass
+        def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
+            tracking["last_model"] = model_override or config.ollama_chat_model
 
         def answer_with_prompt(self, prompt_payload):
             tracking["chat_calls"] += 1
@@ -172,6 +172,24 @@ class AnswerModePolicyTests(unittest.TestCase):
         self.assertIn("Strict mode instructions", prompt_payload.user_prompt)
         self.assertEqual(response.debug.answer_mode_requested.value, "strict")
         self.assertEqual(response.debug.answer_mode_used.value, "strict")
+
+    def test_query_uses_chat_model_override_when_provided(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Agents use retrieval.",
+                    metadata={"note_title": "Agents", "source_path": "agents.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        response = service.ask(QueryRequest(question="agents?", chat_model_override="deepseek-r1"))
+
+        self.assertEqual(tracking["last_model"], "deepseek-r1")
+        self.assertEqual(response.debug.active_chat_model, "deepseek-r1")
 
     def test_music_workflow_flows_into_prompt_payload(self) -> None:
         service, tracking = make_query_service(

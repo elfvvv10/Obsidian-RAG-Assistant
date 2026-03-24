@@ -25,10 +25,10 @@ When external web evidence is provided, keep it distinct from the user's local n
 class OllamaChatClient:
     """Small wrapper around the Ollama chat HTTP API."""
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
         self.config = config
         self.base_url = config.ollama_base_url
-        self.model = config.ollama_chat_model
+        self.model = (model_override or config.ollama_chat_model).strip()
         self.timeout = config.ollama_timeout_seconds
 
     def answer_question(
@@ -74,15 +74,24 @@ class OllamaChatClient:
         return content
 
     def _ensure_model_available(self) -> None:
-        response = self._request("GET", "/api/tags")
-        models = response.json().get("models", [])
-        available_names = {item.get("name", "") for item in models}
+        available_names = set(self.list_available_models())
 
         if self.model not in available_names and f"{self.model}:latest" not in available_names:
             raise RuntimeError(
                 f"Chat model '{self.model}' is not installed in Ollama. "
                 f"Run: ollama pull {self.model}"
             )
+
+    def list_available_models(self) -> list[str]:
+        """Return installed Ollama model names suitable for chat selection."""
+        response = self._request("GET", "/api/tags")
+        models = response.json().get("models", [])
+        names = {
+            str(item.get("name", "")).strip()
+            for item in models
+            if str(item.get("name", "")).strip()
+        }
+        return sorted(names)
 
     def _post_with_retry(self, endpoint: str, json: dict[str, Any]) -> Response:
         last_error: Exception | None = None
@@ -184,3 +193,12 @@ def _format_ollama_error(response: Response) -> str:
     if error_message:
         return f"Ollama request failed: {error_message}"
     return f"Ollama request failed with status {response.status_code}."
+
+
+def list_available_chat_models(config: AppConfig) -> tuple[list[str], str | None]:
+    """Best-effort helper for populating a UI model selector from Ollama."""
+    try:
+        client = OllamaChatClient(config)
+        return client.list_available_models(), None
+    except Exception as exc:
+        return [], str(exc)
