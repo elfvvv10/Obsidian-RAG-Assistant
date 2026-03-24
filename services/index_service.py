@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from config import AppConfig
 from chunker import chunk_notes
 from embeddings import OllamaEmbeddingClient
@@ -25,10 +27,14 @@ class IndexService:
         """Build or rebuild the vector index."""
         logger.info("Loading notes from %s", self.config.obsidian_vault_path)
         excluded_paths = []
-        if self.config.obsidian_output_path != self.config.obsidian_vault_path:
+        if (
+            not self.config.index_saved_answers
+            and self.config.obsidian_output_path != self.config.obsidian_vault_path
+        ):
             excluded_paths.append(self.config.obsidian_output_path)
 
         notes = load_notes(self.config.obsidian_vault_path, excluded_paths=excluded_paths)
+        notes = _classify_saved_answer_notes(notes, self.config)
         resolve_note_links(notes)
 
         embedding_client = OllamaEmbeddingClient(self.config)
@@ -166,3 +172,26 @@ def _select_chunks_to_index(
         chunks_to_index.extend(note_chunk_group)
 
     return chunks_to_index
+
+
+def _classify_saved_answer_notes(notes: list[Note], config: AppConfig) -> list[Note]:
+    if not config.index_saved_answers:
+        return notes
+
+    try:
+        output_relative = config.obsidian_output_path.resolve().relative_to(config.obsidian_vault_path.resolve())
+    except ValueError:
+        return notes
+
+    output_prefix = str(output_relative).replace("\\", "/").strip("/")
+    if not output_prefix:
+        return notes
+
+    classified_notes: list[Note] = []
+    for note in notes:
+        is_saved_answer = note.path == output_prefix or note.path.startswith(f"{output_prefix}/")
+        if is_saved_answer and note.source_kind != "saved_answer":
+            classified_notes.append(replace(note, source_kind="saved_answer"))
+        else:
+            classified_notes.append(note)
+    return classified_notes

@@ -10,7 +10,8 @@ from config import AppConfig
 from utils import Chunk, RetrievalFilters, RetrievedChunk
 
 
-INDEX_SCHEMA_VERSION = "2026-obsidian-rag-schema-1"
+INDEX_SCHEMA_VERSION = "2026-obsidian-rag-schema-2"
+SAVED_ANSWER_DISTANCE_PENALTY = 0.12
 
 
 class VectorStore:
@@ -48,6 +49,7 @@ class VectorStore:
                     "heading_context": chunk.heading_context,
                     "note_key": chunk.note_key,
                     "note_fingerprint": chunk.note_fingerprint,
+                    "source_kind": chunk.source_kind,
                     "tags_serialized": _serialize_tags(chunk.tags),
                     "linked_note_keys_serialized": _serialize_values(chunk.linked_note_keys),
                 }
@@ -148,7 +150,10 @@ class VectorStore:
                     RetrievedChunk(
                         text=document,
                         metadata=linked_metadata,
-                        distance_or_score=None,
+                        distance_or_score=_adjust_distance_for_source_kind(
+                            None,
+                            linked_metadata,
+                        ),
                     )
                 )
 
@@ -173,12 +178,15 @@ class VectorStore:
             if normalized_tag and normalized_tag not in tags:
                 continue
             filtered_candidates.append(
-                RetrievedChunk(
-                    text=document,
-                    metadata=metadata,
-                    distance_or_score=_cosine_distance(query_embedding, embedding),
+                    RetrievedChunk(
+                        text=document,
+                        metadata=metadata,
+                        distance_or_score=_adjust_distance_for_source_kind(
+                            _cosine_distance(query_embedding, embedding),
+                            metadata,
+                        ),
+                    )
                 )
-            )
 
         filtered_candidates.sort(
             key=lambda chunk: float("inf")
@@ -202,12 +210,12 @@ class VectorStore:
             if not document or not metadata:
                 continue
             retrieved.append(
-                RetrievedChunk(
-                    text=document,
-                    metadata=dict(metadata),
-                    distance_or_score=distance,
+                    RetrievedChunk(
+                        text=document,
+                        metadata=dict(metadata),
+                        distance_or_score=_adjust_distance_for_source_kind(distance, metadata),
+                    )
                 )
-            )
         return retrieved
 
     def count(self) -> int:
@@ -243,6 +251,17 @@ def _cosine_distance(left: list[float], right: list[float]) -> float:
 
 def _serialize_tags(tags: tuple[str, ...]) -> str:
     return _serialize_values(tags)
+
+
+def _adjust_distance_for_source_kind(
+    distance: float | None,
+    metadata: dict[str, object],
+) -> float | None:
+    if distance is None:
+        return None
+    if str(metadata.get("source_kind", "")).strip().lower() == "saved_answer":
+        return distance + SAVED_ANSWER_DISTANCE_PENALTY
+    return distance
 
 
 def _deserialize_tags(value: object) -> tuple[str, ...]:

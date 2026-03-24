@@ -267,6 +267,10 @@ def _render_ask_tab(
                 st.write(f"- {source}")
         else:
             st.write("- No local note sources")
+        if response.saved_sources:
+            st.markdown("**Saved Answer Sources**")
+            for source in response.saved_sources:
+                st.write(f"- {source}")
         if response.web_sources:
             st.markdown("**Web Sources**")
             for source in response.web_sources:

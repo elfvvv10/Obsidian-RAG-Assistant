@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from config import AppConfig
+from services.index_service import IndexService
+from services.prompt_service import build_citation_sources
 from main import run_ask, run_index
 from retriever import Retriever
-from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
+from utils import Note, RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
 
@@ -177,3 +180,116 @@ class IncrementalIndexingTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "Run `python main.py rebuild`"):
                 run_index(config, reset_store=False)
+
+    def test_saved_answers_remain_excluded_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            output_dir = vault / "research_answers"
+            vault.mkdir()
+            output_dir.mkdir()
+            (vault / "agents.md").write_text("# Agents\n\nPrimary note", encoding="utf-8")
+            (output_dir / "saved.md").write_text("# Saved\n\nDerived note", encoding="utf-8")
+            config = make_config(root)
+            config = replace(config, obsidian_output_path=output_dir)
+
+            index_service = IndexService(config)
+            with patch(
+                "services.index_service.OllamaEmbeddingClient.embed_texts",
+                return_value=[[1.0, 0.0, 0.0]],
+            ):
+                response = index_service.index(reset_store=True)
+
+            self.assertEqual(response.notes_loaded, 1)
+
+    def test_saved_answers_are_indexed_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            output_dir = vault / "research_answers"
+            vault.mkdir()
+            output_dir.mkdir()
+            (vault / "agents.md").write_text("# Agents\n\nPrimary note", encoding="utf-8")
+            (output_dir / "saved.md").write_text("# Saved\n\nDerived note", encoding="utf-8")
+            config = make_config(root)
+            config = replace(config, obsidian_output_path=output_dir, index_saved_answers=True)
+
+            index_service = IndexService(config)
+            with patch(
+                "services.index_service.OllamaEmbeddingClient.embed_texts",
+                return_value=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            ):
+                response = index_service.index(reset_store=True)
+
+            self.assertEqual(response.notes_loaded, 2)
+
+    def test_saved_answer_chunks_are_downranked_relative_to_primary_notes(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                text="Agents use retrieval.",
+                metadata={
+                    "note_title": "Saved Answer",
+                    "source_path": "research_answers/saved.md",
+                    "source_kind": "saved_answer",
+                },
+                distance_or_score=0.1,
+            ),
+            RetrievedChunk(
+                text="Agents use retrieval.",
+                metadata={
+                    "note_title": "Primary Note",
+                    "source_path": "agents.md",
+                    "source_kind": "primary_note",
+                },
+                distance_or_score=0.1,
+            ),
+        ]
+
+        class StubEmbeddingClient:
+            def embed_text(self, text: str) -> list[float]:
+                return [1.0, 0.0]
+
+        class StubVectorStore:
+            def count(self) -> int:
+                return 2
+
+            def query(self, query_embedding: list[float], top_k: int, filters=None) -> list[RetrievedChunk]:
+                return list(chunks)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+            results = retriever.retrieve("agents retrieval", options=RetrievalOptions(top_k=1, candidate_count=2, rerank=True))
+
+        self.assertEqual(results[0].metadata["source_kind"], "primary_note")
+
+    def test_saved_answer_sources_use_saved_label(self) -> None:
+        sources, _ = build_citation_sources(
+            [
+                RetrievedChunk(
+                    text="Saved synthesis",
+                    metadata={
+                        "note_title": "Research Answer",
+                        "source_path": "research_answers/answer.md",
+                        "source_kind": "saved_answer",
+                    },
+                    distance_or_score=0.1,
+                ),
+                RetrievedChunk(
+                    text="Primary note",
+                    metadata={
+                        "note_title": "Agents",
+                        "source_path": "agents.md",
+                        "source_kind": "primary_note",
+                    },
+                    distance_or_score=0.1,
+                ),
+            ],
+            [],
+        )
+
+        self.assertIn("[Saved 1] Research Answer (research_answers/answer.md)", sources)
+        self.assertIn("[Local 1] Agents (agents.md)", sources)

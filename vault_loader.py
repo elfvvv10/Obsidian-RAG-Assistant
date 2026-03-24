@@ -31,6 +31,7 @@ def load_notes(vault_path: Path, excluded_paths: list[Path] | None = None) -> li
                 frontmatter=frontmatter,
                 tags=tags,
                 links=links,
+                source_kind=_infer_source_kind(frontmatter),
             )
         )
 
@@ -68,3 +69,10 @@ def _extract_title(file_path: Path, content: str) -> str:
         if stripped.startswith("#"):
             return stripped.lstrip("#").strip() or file_path.stem
     return file_path.stem
+
+
+def _infer_source_kind(frontmatter: dict[str, object]) -> str:
+    source_type = str(frontmatter.get("source_type", "")).strip().lower()
+    if source_type == "saved_answer":
+        return "saved_answer"
+    return "primary_note"

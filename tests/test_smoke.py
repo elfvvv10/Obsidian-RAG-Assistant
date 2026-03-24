@@ -37,6 +37,22 @@ class VaultLoaderTests(unittest.TestCase):
             self.assertEqual(len(notes), 1)
             self.assertEqual(notes[0].title, "Source")
 
+    def test_load_notes_marks_saved_answer_from_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vault = Path(tmp_dir)
+            (vault / "saved.md").write_text(
+                "---\n"
+                'source_type: "saved_answer"\n'
+                "---\n\n"
+                "# Saved\n\n"
+                "Saved answer content.\n",
+                encoding="utf-8",
+            )
+
+            notes = load_notes(vault)
+
+            self.assertEqual(notes[0].source_kind, "saved_answer")
+
     def test_load_notes_parses_frontmatter_and_tags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             vault = Path(tmp_dir)

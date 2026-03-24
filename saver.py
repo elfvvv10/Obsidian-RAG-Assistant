@@ -40,10 +40,16 @@ def _build_markdown(question: str, result: AnswerResult, *, title_override: str 
     key_points = _build_key_points(result.answer)
     key_points_block = "\n".join(f"- {point}" for point in key_points) or "- No key points extracted"
     title = title_override.strip() if title_override and title_override.strip() else "Research Answer"
+    timestamp = current_timestamp()
 
     return (
+        "---\n"
+        f'source_type: "saved_answer"\n'
+        f'original_question: "{_escape_frontmatter(question)}"\n'
+        f'saved_at: "{timestamp}"\n'
+        "---\n\n"
         f"# {title}\n\n"
-        f"**Timestamp:** {current_timestamp()}\n\n"
+        f"**Timestamp:** {timestamp}\n\n"
         f"## Question\n\n"
         f"{question}\n\n"
         f"## Summary\n\n"
@@ -98,3 +104,7 @@ def _build_key_points(answer: str) -> list[str]:
 
     sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
     return sentences[:3]
+
+
+def _escape_frontmatter(value: str) -> str:
+    return value.replace('"', '\\"')

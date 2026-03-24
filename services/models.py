@@ -185,6 +185,10 @@ class QueryResponse:
         return [source for source in self.answer_result.sources if source.startswith("[Local")]
 
     @property
+    def saved_sources(self) -> list[str]:
+        return [source for source in self.answer_result.sources if source.startswith("[Saved")]
+
+    @property
     def web_sources(self) -> list[str]:
         return [source for source in self.answer_result.sources if source.startswith("[Web")]
 

@@ -46,6 +46,8 @@ class SaveTemplateTests(unittest.TestCase):
             self.assertIn("## Key Points", contents)
             self.assertIn("## Sources", contents)
             self.assertIn("- They retrieve context.", contents)
+            self.assertIn('source_type: "saved_answer"', contents)
+            self.assertIn('original_question: "What are AI agents?"', contents)
 
     def test_repeated_saves_use_deterministic_collision_suffixes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

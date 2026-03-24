@@ -68,6 +68,7 @@ def build_citation_sources(
     seen_sources: set[str] = set()
 
     local_index = 1
+    saved_index = 1
     for chunk in chunks:
         key = (
             chunk.metadata.get("note_title", "Untitled"),
@@ -76,13 +77,18 @@ def build_citation_sources(
         if key in seen_sources:
             continue
         seen_sources.add(key)
-        label = f"[Local {local_index}]"
+        is_saved = _is_saved_answer_chunk(chunk)
+        if is_saved:
+            label = f"[Saved {saved_index}]"
+            saved_index += 1
+        else:
+            label = f"[Local {local_index}]"
+            local_index += 1
         labeled_sources.append(
             f"{label} {chunk.metadata.get('note_title', 'Untitled')} "
             f"({chunk.metadata.get('source_path', 'unknown')})"
         )
         citation_labels.append(label)
-        local_index += 1
 
     web_index = 1
     for result in web_results:
@@ -214,14 +220,23 @@ def _format_local_context(chunks: list[RetrievedChunk]) -> str:
         return "No relevant local note context was retrieved."
     parts: list[str] = []
     local_index = 1
+    saved_index = 1
     for chunk in chunks:
         title = chunk.metadata.get("note_title", "Untitled note")
         source_path = chunk.metadata.get("source_path", "unknown")
         heading_context = chunk.metadata.get("heading_context", "")
         section_line = f" | Section: {heading_context}" if heading_context else ""
-        context_kind = "Linked note" if chunk.metadata.get("linked_context") else "Primary retrieval"
-        label = f"[Local {local_index}]"
-        local_index += 1
+        source_kind = "Saved answer" if _is_saved_answer_chunk(chunk) else "Primary note"
+        if chunk.metadata.get("linked_context"):
+            context_kind = f"Linked {source_kind.lower()}"
+        else:
+            context_kind = source_kind
+        if _is_saved_answer_chunk(chunk):
+            label = f"[Saved {saved_index}]"
+            saved_index += 1
+        else:
+            label = f"[Local {local_index}]"
+            local_index += 1
         parts.append(
             f"{label}\n"
             f"Type: {context_kind}\n"
@@ -252,8 +267,14 @@ def _build_evidence_types(
     web_results: list[WebSearchResult],
 ) -> tuple[str, ...]:
     evidence_types: list[str] = []
-    if chunks:
+    if any(_is_saved_answer_chunk(chunk) for chunk in chunks):
+        evidence_types.append("saved_answer")
+    if any(not _is_saved_answer_chunk(chunk) for chunk in chunks):
         evidence_types.append("local_note")
     if web_results:
         evidence_types.append("web")
     return tuple(evidence_types)
+
+
+def _is_saved_answer_chunk(chunk: RetrievedChunk) -> bool:
+    return str(chunk.metadata.get("source_kind", "")).strip().lower() == "saved_answer"

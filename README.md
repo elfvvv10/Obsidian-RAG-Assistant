@@ -24,7 +24,8 @@ A local-first Python Obsidian RAG assistant that runs through a CLI or a lightwe
 - Supports YouTube transcript ingestion as a separate content-import workflow
 - Optionally saves answers back into the vault as Markdown notes
 - Uses incremental indexing to update only changed notes
-- Excludes saved answers in the configured output folder from indexing when that folder lives inside the vault
+- Excludes saved answers in the configured output folder from indexing by default when that folder lives inside the vault
+- Can optionally index saved answers as secondary retrieval sources with distinct `[Saved N]` labels
 - Includes mocked tests, local smoke tests, and phase-focused module tests
 - Includes a sample vault for quick testing
 
@@ -160,6 +161,7 @@ ENABLE_LINKED_NOTE_EXPANSION=false
 MAX_LINKED_NOTES=2
 LINKED_NOTE_CHUNKS_PER_NOTE=1
 AUTO_SAVE_ANSWER=false
+INDEX_SAVED_ANSWERS=false
 WEB_SEARCH_PROVIDER=wikipedia
 WEB_SEARCH_API_URL=
 WEB_SEARCH_MAX_RESULTS=3
@@ -190,6 +192,7 @@ Variable notes:
 - `MAX_LINKED_NOTES`: maximum linked notes to expand per question
 - `LINKED_NOTE_CHUNKS_PER_NOTE`: chunks to include from each linked note
 - `AUTO_SAVE_ANSWER`: save answers automatically without prompting
+- `INDEX_SAVED_ANSWERS`: when enabled, saved answers in the output folder are indexed as secondary derived notes
 - `WEB_SEARCH_PROVIDER`: external search provider. `wikipedia` is the default no-key option. `duckduckgo` remains available as an alternative.
 - `WEB_SEARCH_API_URL`: optional provider endpoint override. Leave blank to use the provider default.
 - `WEB_SEARCH_MAX_RESULTS`: maximum number of external results to include
@@ -340,6 +343,7 @@ The UI includes four main areas:
 - `Sidebar`: query filters and retrieval controls such as folder, path text, tag, top-k, reranking, linked-note expansion, auto-save, retrieval mode, and answer mode
 - `Ask`: question input, answer display, separate local/web sources, save actions, linked-note context, and an optional debug view of retrieval stages
 - `Ask`: when web search is attempted, the UI can also show the actual web query used, whether a retry was attempted, and a brief explanation when no web sources were included
+- `Ask`: when saved answers are indexed and used, they appear in a separate `Saved Answer Sources` section
 - `Ingest`: paste a webpage URL or YouTube URL, save it into the vault, and optionally trigger indexing right away
 - `Index`: readiness messages plus build and rebuild actions
 - `Settings / Debug`: active models, paths, app readiness, index compatibility, and the debug toggle
@@ -366,6 +370,8 @@ If you save the same question repeatedly, the app keeps existing notes and creat
 
 In the Streamlit UI, you can also provide an optional title override before saving. That title is used for the note heading and filename slug, while the underlying save logic stays the same.
 
+Saved answer notes also include lightweight frontmatter metadata such as `source_type: "saved_answer"`, the original question, and the save timestamp so they can be recognized safely later if you enable indexing for them.
+
 ## Example Workflow
 
 ```bash
@@ -381,6 +387,8 @@ sample_vault/research_answers/
 ```
 
 When `OBSIDIAN_OUTPUT_PATH` points to a folder inside the vault, saved answer notes in that folder are excluded from indexing by default so they do not pollute retrieval.
+
+If you enable `INDEX_SAVED_ANSWERS=true`, those saved notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
 
 ## Project Structure
 
@@ -562,6 +570,7 @@ This can happen after retrieval-relevant schema changes such as new metadata fie
 
 - Chunking is Markdown-aware but still heuristic rather than token-aware
 - Metadata filters are still intentionally simple: folder, path text, and tag-based controls only
+- Saved answers can be indexed as a secondary source, but there is not yet a dedicated UI toggle or retrieval filter just for saved-answer notes
 - The Streamlit UI is intentionally lightweight and does not yet include persistent chat history or advanced source inspection workflows
 - The UI exposes retrieval/debug structure intended to support future features, but it is still intentionally simple
 - Web search is optional and external, so its availability and result quality depend on the configured provider

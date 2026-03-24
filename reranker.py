@@ -28,7 +28,8 @@ def rerank_chunks(
         similarity = max(0.0, 1.0 - distance)
         metadata_tags = set(_metadata_tags(chunk))
         tag_bonus = len(normalized_boost_tags & metadata_tags) * tag_boost_weight
-        return overlap * 2.0 + similarity + tag_bonus
+        source_penalty = 0.25 if _is_saved_answer(chunk) else 0.0
+        return overlap * 2.0 + similarity + tag_bonus - source_penalty
 
     return sorted(chunks, key=score, reverse=True)
 
@@ -42,3 +43,7 @@ def _metadata_tags(chunk: RetrievedChunk) -> tuple[str, ...]:
     if not isinstance(serialized, str) or not serialized:
         return ()
     return tuple(part for part in serialized.split("|") if part)
+
+
+def _is_saved_answer(chunk: RetrievedChunk) -> bool:
+    return str(chunk.metadata.get("source_kind", "")).strip().lower() == "saved_answer"

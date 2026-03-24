@@ -34,6 +34,7 @@ def chunk_notes(
                 normalized_text,
                 "|".join(note.tags),
                 "|".join(note.linked_note_keys),
+                note.source_kind,
             ]
         )
         note_fingerprint = compute_note_fingerprint(note_path, fingerprint_seed)
@@ -57,6 +58,7 @@ def chunk_notes(
                     note_fingerprint=note_fingerprint,
                     tags=note.tags,
                     linked_note_keys=note.linked_note_keys,
+                    source_kind=note.source_kind,
                 )
             )
 

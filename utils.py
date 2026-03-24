@@ -75,6 +75,7 @@ class Note:
     tags: tuple[str, ...] = ()
     links: tuple[str, ...] = ()
     linked_note_keys: tuple[str, ...] = ()
+    source_kind: str = "primary_note"
 
 
 @dataclass(slots=True)
@@ -92,6 +93,7 @@ class Chunk:
     note_fingerprint: str = ""
     tags: tuple[str, ...] = ()
     linked_note_keys: tuple[str, ...] = ()
+    source_kind: str = "primary_note"
 
 
 @dataclass(slots=True)

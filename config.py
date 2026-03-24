@@ -32,6 +32,7 @@ class AppConfig:
     max_linked_notes: int = 2
     linked_note_chunks_per_note: int = 1
     auto_save_answer: bool = False
+    index_saved_answers: bool = False
     web_search_provider: str = "wikipedia"
     web_search_api_url: str = ""
     web_search_max_results: int = 3
@@ -74,6 +75,7 @@ def load_config() -> AppConfig:
     max_linked_notes = _required_int_env("MAX_LINKED_NOTES", default=2, minimum=1)
     linked_note_chunks_per_note = _required_int_env("LINKED_NOTE_CHUNKS_PER_NOTE", default=1, minimum=1)
     auto_save_answer = _bool_env("AUTO_SAVE_ANSWER", default=False)
+    index_saved_answers = _bool_env("INDEX_SAVED_ANSWERS", default=False)
     web_search_provider = _choice_env(
         "WEB_SEARCH_PROVIDER",
         default="wikipedia",
@@ -115,6 +117,7 @@ def load_config() -> AppConfig:
         max_linked_notes=max_linked_notes,
         linked_note_chunks_per_note=linked_note_chunks_per_note,
         auto_save_answer=auto_save_answer,
+        index_saved_answers=index_saved_answers,
         web_search_provider=web_search_provider,
         web_search_api_url=web_search_api_url,
         web_search_max_results=web_search_max_results,
