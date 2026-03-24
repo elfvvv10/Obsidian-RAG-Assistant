@@ -18,6 +18,7 @@ A local-first Python Obsidian RAG assistant that runs through a CLI or a lightwe
 - Supports answer modes for stricter or more exploratory answer behavior
 - Supports a visible research mode that decomposes a goal into explicit subquestions
 - Labels local sources, web sources, and inference more explicitly
+- Supports retrieval scopes so you can search only curated knowledge or a broader extended set of notes
 - Shows source note references in the terminal
 - Includes a lightweight local Streamlit UI for asking questions, indexing, and debugging
 - Supports optional external web search as a separate evidence path
@@ -28,6 +29,7 @@ A local-first Python Obsidian RAG assistant that runs through a CLI or a lightwe
 - Uses incremental indexing to update only changed notes
 - Excludes draft answers, research sessions, and imported content from indexing by default
 - Can optionally index saved answers as secondary retrieval sources with distinct `[Saved N]` labels
+- Keeps generated/imported content visually distinct from curated knowledge and ordinary non-curated notes
 - Includes mocked tests, local smoke tests, and phase-focused module tests
 - Includes a sample vault for quick testing
 
@@ -263,6 +265,8 @@ python main.py ask "What do my notes say about AI agents?" --auto-save
 python main.py ask "What do my notes say about AI agents?" --top-k 2 --candidate-count 6 --rerank
 python main.py ask "What happened in AI this week?" --retrieval-mode auto
 python main.py ask "Summarize local notes and web context for local models" --retrieval-mode hybrid
+python main.py ask "What do my curated notes say about AI agents?" --retrieval-scope knowledge
+python main.py ask "Search curated notes plus drafts and imports for AI agents" --retrieval-scope extended
 python main.py ask "What do my notes say about AI agents?" --answer-mode strict
 python main.py ask "Compare my notes with recent external context" --retrieval-mode hybrid --answer-mode exploratory
 ```
@@ -309,6 +313,22 @@ It is still intentionally bounded:
 - `auto`: try local retrieval first, and use web search only when local evidence is missing or weak.
 - `hybrid`: use local retrieval and web search together, even if local evidence exists.
 
+### Retrieval Scopes
+
+- `knowledge`: search curated knowledge only. This is the default and is the highest-trust local retrieval mode.
+- `extended`: search all indexed local content, including:
+  - curated knowledge
+  - all non-curated vault notes
+  - draft answers
+  - research sessions
+  - webpage imports
+  - YouTube imports
+
+Retrieval scope controls which local vault content is eligible for search. Retrieval mode still controls whether web evidence is allowed.
+
+By default, `knowledge` is the safest choice because it searches only notes under `CURATED_KNOWLEDGE_FOLDER`.
+`extended` is broader and more exploratory. It can be useful when you want to search unfinished notes, imported material, or draft outputs, but it may include lower-trust or partially complete content.
+
 When web search is used, local note sources and web sources are labeled separately in both the CLI and UI.
 The default provider is now Wikipedia search because it is a more reliable no-key option than the previous DuckDuckGo-only path.
 When local note evidence exists in `hybrid` mode, the app now narrows the web query using the strongest local note topics and filters out clearly off-topic web results before prompting.
@@ -327,6 +347,8 @@ Answer mode controls how the model is allowed to write the answer. Retrieval mod
 ### Source Labels and Inference
 
 - `[Local 1]`, `[Local 2]`, and so on refer to your Obsidian notes.
+- `[Saved 1]`, `[Saved 2]`, and so on refer to draft answers or research-session notes when they have been indexed and retrieved.
+- `[Import 1]`, `[Import 2]`, and so on refer to imported external content such as webpages or YouTube transcripts when they have been indexed and retrieved.
 - `[Web 1]`, `[Web 2]`, and so on refer to external web results.
 - `[Inference]` marks model synthesis that goes beyond directly retrieved evidence.
 
@@ -386,10 +408,10 @@ streamlit run streamlit_app.py
 The UI includes four main areas:
 
 - `Sidebar`: query filters and retrieval controls such as folder, path text, tag, top-k, reranking, linked-note expansion, auto-save, retrieval mode, and answer mode
-- `Ask`: question input, a visible workflow toggle for `Direct Ask` or `Research Mode`, answer display, separate local/web sources, save actions, linked-note context, and an optional debug view of retrieval stages
+- `Ask`: question input, a visible workflow toggle for `Direct Ask` or `Research Mode`, a retrieval-scope control, answer display, separate source sections, save actions, linked-note context, and an optional debug view of retrieval stages
 - `Ask`: when web search is attempted, the UI can also show the actual web query used, whether a retry was attempted, and a brief explanation when no web sources were included
-- `Ask`: when saved answers are indexed and used, they appear in a separate `Saved Answer Sources` section
-- `Ask`: a visible toggle directly under the question box lets you decide per question whether indexed saved answers should be included
+- `Ask`: retrieved local content is separated into curated knowledge, non-curated notes, generated draft sources, imported sources, and web sources where applicable
+- `Ask`: debug/status output shows the current retrieval scope and separate counts for curated knowledge, non-curated notes, and generated/imported content
 - `Ask`: in research mode, the UI shows the generated subquestions, step-by-step findings, and the final synthesized answer
 - `Ingest`: paste a webpage URL or YouTube URL, save it into the vault, and optionally trigger indexing right away
 - `Index`: readiness messages plus build and rebuild actions
@@ -451,6 +473,17 @@ By default, notes in the dedicated draft, research-session, and import folders a
 Curated knowledge is whatever you intentionally maintain outside those draft/import folders, with `CURATED_KNOWLEDGE_FOLDER` provided as a clear target for future promotion workflows.
 
 If you enable `INDEX_SAVED_ANSWERS=true`, those draft-answer notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
+
+If you later query with `--retrieval-scope extended`, the app can search:
+
+- curated knowledge
+- normal non-curated notes elsewhere in the vault
+- saved drafts when indexed
+- research sessions when indexed
+- webpage imports when indexed
+- YouTube imports when indexed
+
+That broader scope is useful for exploratory work, but the default `knowledge` scope keeps day-to-day retrieval cleaner and more trustworthy.
 
 ## Project Structure
 
@@ -635,6 +668,7 @@ This can happen after retrieval-relevant schema changes such as new metadata fie
 - Chunking is Markdown-aware but still heuristic rather than token-aware
 - Metadata filters are still intentionally simple: folder, path text, and tag-based controls only
 - Saved answers can be indexed as a secondary source and toggled per question in the UI, but they are still a lightweight derived-note feature rather than a full memo-management workflow
+- Retrieval scope is folder-based today. It is designed so metadata such as `status=approved` can influence future promotion workflows, but that promotion path is not implemented yet.
 - Imported webpages and YouTube transcripts are stored separately and excluded from indexing by default, but there is not yet a full review-and-promote workflow for turning them into curated knowledge
 - The Streamlit UI is intentionally lightweight and does not yet include persistent chat history or advanced source inspection workflows
 - The UI exposes retrieval/debug structure intended to support future features, but it is still intentionally simple

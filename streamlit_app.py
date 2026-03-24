@@ -18,6 +18,7 @@ from services.models import (
     ResearchRequest,
     ResearchResponse,
     RetrievalMode,
+    RetrievalScope,
     WorkflowMode,
 )
 from services.query_service import QueryService
@@ -135,6 +136,7 @@ def _render_sidebar(config: AppConfig, status: IndexResponse | None, status_erro
                 "Exploratory: evidence plus broader synthesis and labeled inference."
             ),
         )
+        st.caption("Retrieval scope is chosen in the Ask tab so it stays close to the current question.")
 
         st.divider()
         st.subheader("App Readiness")
@@ -207,24 +209,31 @@ def _render_ask_tab(
                     )
                 )
             st.markdown("#### Retrieval Scope")
-            st.session_state["use_saved_answers"] = st.toggle(
-                "Use saved answers for this question",
-                value=st.session_state["use_saved_answers"],
-                help="Include previously saved answer notes as secondary sources for this question only.",
+            st.session_state["retrieval_scope"] = st.radio(
+                "Local retrieval scope",
+                options=[RetrievalScope.KNOWLEDGE.value, RetrievalScope.EXTENDED.value],
+                index=[RetrievalScope.KNOWLEDGE.value, RetrievalScope.EXTENDED.value].index(
+                    st.session_state["retrieval_scope"]
+                ),
+                horizontal=True,
+                format_func=lambda value: (
+                    "Knowledge — curated notes only"
+                    if value == RetrievalScope.KNOWLEDGE.value
+                    else "Extended — curated + non-curated notes, drafts, research, and imports"
+                ),
             )
-            if st.session_state["use_saved_answers"]:
-                if config.index_saved_answers:
-                    st.caption("Saved answers are enabled for this question and will be treated as secondary sources.")
-                else:
-                    st.warning(
-                        "Saved answers are not currently indexed. Enable `INDEX_SAVED_ANSWERS=true` and rebuild the index to use them here."
-                    )
+            if st.session_state["retrieval_scope"] == RetrievalScope.KNOWLEDGE.value:
+                st.caption("Knowledge scope searches only notes inside your curated knowledge folder.")
+            else:
+                st.caption(
+                    "Extended scope searches curated notes plus indexed non-curated notes, drafts, research outputs, and imports."
+                )
 
     with save_col:
         st.markdown("### Save Options")
         st.caption(
-            f"Direct answers save to `{ui_config.draft_answers_path}`. "
-            f"Research-mode saves go to `{ui_config.research_sessions_path}`."
+            f"Direct answers save to `{config.draft_answers_path}`. "
+            f"Research-mode saves go to `{config.research_sessions_path}`."
         )
         st.session_state["save_title"] = st.text_input(
             "Optional note title",
@@ -248,6 +257,7 @@ def _render_ask_tab(
                     options=_current_options(),
                     auto_save=st.session_state["auto_save"],
                     save_title=st.session_state["save_title"].strip() or None,
+                    retrieval_scope=st.session_state["retrieval_scope"],
                     retrieval_mode=st.session_state["retrieval_mode"],
                     answer_mode=st.session_state["answer_mode"],
                 )
@@ -259,6 +269,7 @@ def _render_ask_tab(
                             options=request.options,
                             auto_save=request.auto_save,
                             save_title=request.save_title,
+                            retrieval_scope=request.retrieval_scope,
                             retrieval_mode=request.retrieval_mode,
                             answer_mode=request.answer_mode,
                             max_subquestions=st.session_state["max_subquestions"],
@@ -321,9 +332,14 @@ def _render_ask_tab(
     status_cols = st.columns(5)
     status_cols[0].metric("Answer mode", response.answer_mode_used.value)
     status_cols[1].metric("Retrieval mode", str(response.debug.retrieval_mode_used))
-    status_cols[2].metric("Local notes used", "Yes" if response.local_sources else "No")
+    status_cols[2].metric("Retrieval scope", response.debug.retrieval_scope_requested.value)
     status_cols[3].metric("Web used", "Yes" if response.web_used else "No")
     status_cols[4].metric("Inference used", "Yes" if response.inference_used else "No")
+
+    trust_cols = st.columns(3)
+    trust_cols[0].metric("Curated knowledge chunks", response.debug.curated_knowledge_chunks)
+    trust_cols[1].metric("Non-curated note chunks", response.debug.non_curated_note_chunks)
+    trust_cols[2].metric("Generated/import chunks", response.debug.generated_or_imported_chunks)
 
     summary_col, sources_col = st.columns([3, 2])
     with summary_col:
@@ -331,14 +347,23 @@ def _render_ask_tab(
         st.write(response.answer)
     with sources_col:
         st.subheader("Sources")
-        if response.local_sources:
-            for source in response.local_sources:
-                st.write(f"- {source}")
-        else:
+        if response.curated_chunks:
+            st.markdown("**Curated Knowledge**")
+            for chunk in response.curated_chunks:
+                st.write(f"- {_source_line_from_chunk(chunk, label='[Local]')}")
+        if response.non_curated_chunks:
+            st.markdown("**Non-Curated Notes**")
+            for chunk in response.non_curated_chunks:
+                st.write(f"- {_source_line_from_chunk(chunk, label='[Local]')}")
+        if not response.curated_chunks and not response.non_curated_chunks:
             st.write("- No local note sources")
         if response.saved_sources:
-            st.markdown("**Saved Answer Sources**")
+            st.markdown("**Generated Draft Sources**")
             for source in response.saved_sources:
+                st.write(f"- {source}")
+        if response.imported_sources:
+            st.markdown("**Imported Sources**")
+            for source in response.imported_sources:
                 st.write(f"- {source}")
         if response.web_sources:
             st.markdown("**Web Sources**")
@@ -399,7 +424,10 @@ def _render_research_response(
     status_cols = st.columns(5)
     status_cols[0].metric("Workflow", "Research")
     status_cols[1].metric("Subquestions", str(len(response.subquestions)))
-    status_cols[2].metric("Local notes used", "Yes" if response.local_sources else "No")
+    status_cols[2].metric(
+        "Retrieval scope",
+        response.steps[0].response.debug.retrieval_scope_requested.value if response.steps else RetrievalScope.KNOWLEDGE.value,
+    )
     status_cols[3].metric("Web used", "Yes" if response.web_sources else "No")
     status_cols[4].metric("Inference used", "Yes" if response.inference_used else "No")
 
@@ -426,14 +454,29 @@ def _render_research_response(
         st.write(response.answer)
     with sources_col:
         st.subheader("Sources")
-        if response.local_sources:
-            for source in response.local_sources:
-                st.write(f"- {source}")
-        else:
+        curated_chunks = [
+            chunk for chunk in response.retrieved_chunks if chunk.metadata.get("content_category") == "curated_knowledge"
+        ]
+        non_curated_chunks = [
+            chunk for chunk in response.retrieved_chunks if chunk.metadata.get("content_category") == "non_curated_note"
+        ]
+        if curated_chunks:
+            st.markdown("**Curated Knowledge**")
+            for chunk in curated_chunks:
+                st.write(f"- {_source_line_from_chunk(chunk, label='[Local]')}")
+        if non_curated_chunks:
+            st.markdown("**Non-Curated Notes**")
+            for chunk in non_curated_chunks:
+                st.write(f"- {_source_line_from_chunk(chunk, label='[Local]')}")
+        if not curated_chunks and not non_curated_chunks:
             st.write("- No local note sources")
         if response.saved_sources:
-            st.markdown("**Saved Answer Sources**")
+            st.markdown("**Generated Draft Sources**")
             for source in response.saved_sources:
+                st.write(f"- {source}")
+        if response.imported_sources:
+            st.markdown("**Imported Sources**")
+            for source in response.imported_sources:
                 st.write(f"- {source}")
         if response.web_sources:
             st.markdown("**Web Sources**")
@@ -582,11 +625,15 @@ def _render_debug_section(response: QueryResponse) -> None:
                     "boost_tags": list(response.debug.retrieval_options.boost_tags),
                     "include_linked_notes": response.debug.retrieval_options.include_linked_notes,
                 },
+                "retrieval_scope_requested": response.debug.retrieval_scope_requested,
                 "retrieval_mode_requested": response.debug.retrieval_mode_requested,
                 "retrieval_mode_used": response.debug.retrieval_mode_used,
                 "answer_mode_requested": response.debug.answer_mode_requested,
                 "answer_mode_used": response.debug.answer_mode_used,
                 "web_used": response.debug.web_used,
+                "curated_knowledge_chunks": response.debug.curated_knowledge_chunks,
+                "non_curated_note_chunks": response.debug.non_curated_note_chunks,
+                "generated_or_imported_chunks": response.debug.generated_or_imported_chunks,
                 "local_retrieval_weak": response.debug.local_retrieval_weak,
                 "reranking_applied": response.debug.reranking_applied,
                 "evidence_types_used": list(response.debug.evidence_types_used),
@@ -642,6 +689,9 @@ def _render_chunk_list(title: str, chunks: list) -> None:
                 "source_path": chunk.metadata.get("source_path"),
                 "note_title": chunk.metadata.get("note_title"),
                 "heading_context": chunk.metadata.get("heading_context"),
+                "content_scope": chunk.metadata.get("content_scope"),
+                "content_category": chunk.metadata.get("content_category"),
+                "source_type": chunk.metadata.get("source_type"),
                 "distance_or_score": chunk.distance_or_score,
                 "linked_context": chunk.metadata.get("linked_context", False),
                 "tags_serialized": chunk.metadata.get("tags_serialized", ""),
@@ -665,6 +715,13 @@ def _render_web_results(response: QueryResponse) -> None:
             }
         )
         st.write(result.snippet)
+
+
+def _source_line_from_chunk(chunk, *, label: str) -> str:
+    return (
+        f"{label} {chunk.metadata.get('note_title', 'Untitled')} "
+        f"({chunk.metadata.get('source_path', 'unknown')})"
+    )
 
 
 def _render_index_tab(index_service: IndexService, status: IndexResponse | None) -> None:
@@ -753,6 +810,7 @@ def _render_settings_tab(config: AppConfig, status: IndexResponse | None, status
     st.caption(
         "Query filters and retrieval controls live in the sidebar so they stay close to the Ask workflow."
     )
+    st.write(f"Current retrieval scope: `{st.session_state['retrieval_scope']}`")
     st.write(f"Current retrieval mode: `{st.session_state['retrieval_mode']}`")
     st.write(f"Current answer mode: `{st.session_state['answer_mode']}`")
     st.write(f"Current workflow mode: `{st.session_state['workflow_mode']}`")
@@ -771,7 +829,6 @@ def _current_options() -> RetrievalOptions:
         top_k=st.session_state["top_k"],
         rerank=st.session_state["enable_reranking"],
         include_linked_notes=st.session_state["include_linked"],
-        include_saved_answers=st.session_state["use_saved_answers"],
     )
 
 
@@ -785,7 +842,7 @@ def _init_session_state(config: AppConfig) -> None:
         "top_k": config.top_k_results,
         "enable_reranking": config.enable_reranking,
         "include_linked": config.enable_linked_note_expansion,
-        "use_saved_answers": False,
+        "retrieval_scope": RetrievalScope.KNOWLEDGE.value,
         "auto_save": config.auto_save_answer,
         "retrieval_mode": RetrievalMode.LOCAL_ONLY.value,
         "answer_mode": AnswerMode.BALANCED.value,

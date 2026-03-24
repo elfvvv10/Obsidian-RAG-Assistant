@@ -15,6 +15,7 @@ from services.models import (
     QueryResponse,
     RetrievalMode,
     RetrievalModeUsed,
+    RetrievalScope,
     WebSearchAttemptInfo,
     WebQueryStrategy,
 )
@@ -74,11 +75,7 @@ class QueryService:
         logger.info("Retrieving relevant notes")
         if not self.capture_debug_trace:
             try:
-                final_chunks = retriever.retrieve(
-                    request.question,
-                    filters=request.filters,
-                    options=request.options,
-                )
+                final_chunks = self._retrieve_chunks(retriever, request)
             except RuntimeError as exc:
                 if request.retrieval_mode == RetrievalMode.LOCAL_ONLY:
                     raise
@@ -107,11 +104,7 @@ class QueryService:
             reranking_applied = bool(request.options.rerank or request.options.boost_tags)
             reranking_changed = False
         else:
-            retrieval_debug = retriever.retrieve_with_debug(
-                request.question,
-                filters=request.filters,
-                options=request.options,
-            )
+            retrieval_debug = self._retrieve_chunks_with_debug(retriever, request)
             initial_candidates = retrieval_debug.initial_candidates
             primary_chunks = retrieval_debug.primary_chunks
             final_chunks = retrieval_debug.final_chunks
@@ -165,6 +158,7 @@ class QueryService:
             )
             if enabled
         )
+        trust_counts = _count_trust_categories(answer_result.retrieved_chunks)
 
         if request.auto_save or self.config.auto_save_answer:
             saved_path = save_answer(
@@ -191,6 +185,7 @@ class QueryService:
                 reranking_changed=reranking_changed,
                 retrieval_filters=request.filters,
                 retrieval_options=request.options,
+                retrieval_scope_requested=request.retrieval_scope,
                 retrieval_mode_requested=request.retrieval_mode,
                 retrieval_mode_used=_resolve_retrieval_mode_used(request.retrieval_mode, web_results),
                 answer_mode_requested=request.answer_mode,
@@ -211,6 +206,9 @@ class QueryService:
                     attempt.results_discarded_by_filter for attempt in attempts
                 ),
                 web_retry_used=any(attempt.retry_used for attempt in attempts),
+                curated_knowledge_chunks=trust_counts["curated_knowledge"],
+                non_curated_note_chunks=trust_counts["non_curated_note"],
+                generated_or_imported_chunks=trust_counts["generated_or_imported"],
                 hallucination_guard_warnings=tuple(
                     _build_guard_warnings(
                         answer_result=answer_result,
@@ -255,6 +253,40 @@ class QueryService:
             web_results=[],
             debug=QueryDebugInfo(),
         )
+
+    def _retrieve_chunks(self, retriever: Retriever, request: QueryRequest) -> list[RetrievedChunk]:
+        try:
+            return retriever.retrieve(
+                request.question,
+                filters=request.filters,
+                options=request.options,
+                retrieval_scope=request.retrieval_scope,
+            )
+        except TypeError as exc:
+            if "retrieval_scope" not in str(exc):
+                raise
+            return retriever.retrieve(
+                request.question,
+                filters=request.filters,
+                options=request.options,
+            )
+
+    def _retrieve_chunks_with_debug(self, retriever: Retriever, request: QueryRequest):
+        try:
+            return retriever.retrieve_with_debug(
+                request.question,
+                filters=request.filters,
+                options=request.options,
+                retrieval_scope=request.retrieval_scope,
+            )
+        except TypeError as exc:
+            if "retrieval_scope" not in str(exc):
+                raise
+            return retriever.retrieve_with_debug(
+                request.question,
+                filters=request.filters,
+                options=request.options,
+            )
 
     def _run_web_search_if_needed(
         self,
@@ -580,3 +612,16 @@ def _resolve_retrieval_mode_used(
     if retrieval_mode == RetrievalMode.HYBRID:
         return RetrievalModeUsed.HYBRID if web_results else RetrievalModeUsed.HYBRID_NO_WEB_RESULTS
     return RetrievalModeUsed.AUTO_WITH_WEB if web_results else RetrievalModeUsed.AUTO_LOCAL_ONLY
+
+
+def _count_trust_categories(chunks: list[RetrievedChunk]) -> dict[str, int]:
+    counts = {
+        "curated_knowledge": 0,
+        "non_curated_note": 0,
+        "generated_or_imported": 0,
+    }
+    for chunk in chunks:
+        category = str(chunk.metadata.get("content_category", "")).strip().lower()
+        if category in counts:
+            counts[category] += 1
+    return counts

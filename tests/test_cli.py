@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import main
 from config import AppConfig
-from services.models import IngestionResponse, ResearchResponse
+from services.models import IngestionResponse, QueryResponse, ResearchResponse
 from utils import AnswerResult, RetrievedChunk
 
 
@@ -151,6 +151,43 @@ class CLITests(unittest.TestCase):
             self.assertEqual(called_options.top_k, 2)
             self.assertEqual(called_options.candidate_count, 4)
             self.assertTrue(called_options.rerank)
+
+    def test_main_ask_command_passes_retrieval_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            with patch("main.load_config", return_value=config), patch(
+                "main.QueryService.ask"
+            ) as ask_mock, patch(
+                "main.prompt_to_save",
+                return_value=False,
+            ), patch(
+                "sys.argv",
+                ["main.py", "ask", "What do my notes say?", "--retrieval-scope", "extended"],
+            ):
+                ask_mock.return_value = QueryResponse(
+                    answer_result=AnswerResult(
+                        answer="Grounded answer",
+                        sources=["[Local 1] Agents (knowledge/agents.md)"],
+                        retrieved_chunks=[
+                            RetrievedChunk(
+                                text="Agents note",
+                                metadata={"note_title": "Agents", "source_path": "knowledge/agents.md"},
+                                distance_or_score=0.1,
+                            )
+                        ],
+                    ),
+                )
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    exit_code = main.main()
+
+            self.assertEqual(exit_code, 0)
+            request = ask_mock.call_args.args[0]
+            self.assertEqual(request.retrieval_scope.value, "extended")
 
     def test_main_ingest_webpage_command_dispatches_to_ingestion_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

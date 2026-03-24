@@ -33,6 +33,28 @@ class RetrievalMode(StrEnum):
         )
 
 
+class RetrievalScope(StrEnum):
+    """Supported local retrieval scopes."""
+
+    KNOWLEDGE = "knowledge"
+    EXTENDED = "extended"
+
+    @classmethod
+    def coerce(cls, value: "RetrievalScope | str | None") -> "RetrievalScope":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls.KNOWLEDGE
+        normalized = str(value).strip().lower()
+        for scope in cls:
+            if scope.value == normalized:
+                return scope
+        raise ValueError(
+            f"Unsupported retrieval scope: {value}. Expected one of: "
+            f"{', '.join(scope.value for scope in cls)}."
+        )
+
+
 class RetrievalModeUsed(StrEnum):
     """Resolved retrieval behavior used for the final answer."""
 
@@ -105,10 +127,12 @@ class QueryRequest:
     options: RetrievalOptions = field(default_factory=RetrievalOptions)
     auto_save: bool = False
     save_title: str | None = None
+    retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE
     retrieval_mode: RetrievalMode = RetrievalMode.LOCAL_ONLY
     answer_mode: AnswerMode = AnswerMode.BALANCED
 
     def __post_init__(self) -> None:
+        self.retrieval_scope = RetrievalScope.coerce(self.retrieval_scope)
         self.retrieval_mode = RetrievalMode.coerce(self.retrieval_mode)
         self.answer_mode = AnswerMode.coerce(self.answer_mode)
 
@@ -123,6 +147,7 @@ class QueryDebugInfo:
     reranking_changed: bool = False
     retrieval_filters: RetrievalFilters = field(default_factory=RetrievalFilters)
     retrieval_options: RetrievalOptions = field(default_factory=RetrievalOptions)
+    retrieval_scope_requested: RetrievalScope = RetrievalScope.KNOWLEDGE
     retrieval_mode_requested: RetrievalMode = RetrievalMode.LOCAL_ONLY
     retrieval_mode_used: RetrievalModeUsed = RetrievalModeUsed.LOCAL_ONLY
     answer_mode_requested: AnswerMode = AnswerMode.BALANCED
@@ -142,6 +167,9 @@ class QueryDebugInfo:
     web_provider_returned_results: bool = False
     web_results_discarded_by_filter: bool = False
     web_retry_used: bool = False
+    curated_knowledge_chunks: int = 0
+    non_curated_note_chunks: int = 0
+    generated_or_imported_chunks: int = 0
 
 
 @dataclass(slots=True)
@@ -196,8 +224,28 @@ class QueryResponse:
         return [source for source in self.answer_result.sources if source.startswith("[Saved")]
 
     @property
+    def imported_sources(self) -> list[str]:
+        return [source for source in self.answer_result.sources if source.startswith("[Import")]
+
+    @property
     def web_sources(self) -> list[str]:
         return [source for source in self.answer_result.sources if source.startswith("[Web")]
+
+    @property
+    def curated_chunks(self) -> list[RetrievedChunk]:
+        return [chunk for chunk in self.retrieved_chunks if chunk.metadata.get("content_category") == "curated_knowledge"]
+
+    @property
+    def non_curated_chunks(self) -> list[RetrievedChunk]:
+        return [chunk for chunk in self.retrieved_chunks if chunk.metadata.get("content_category") == "non_curated_note"]
+
+    @property
+    def generated_or_imported_chunks(self) -> list[RetrievedChunk]:
+        return [
+            chunk
+            for chunk in self.retrieved_chunks
+            if chunk.metadata.get("content_category") == "generated_or_imported"
+        ]
 
     def with_saved_path(self, saved_path: Path) -> "QueryResponse":
         """Return a copy with the saved path filled in while preserving evidence state."""
@@ -211,6 +259,7 @@ class ResearchRequest:
     goal: str
     filters: RetrievalFilters = field(default_factory=RetrievalFilters)
     options: RetrievalOptions = field(default_factory=RetrievalOptions)
+    retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE
     retrieval_mode: RetrievalMode = RetrievalMode.LOCAL_ONLY
     answer_mode: AnswerMode = AnswerMode.BALANCED
     max_subquestions: int = 3
@@ -218,6 +267,7 @@ class ResearchRequest:
     save_title: str | None = None
 
     def __post_init__(self) -> None:
+        self.retrieval_scope = RetrievalScope.coerce(self.retrieval_scope)
         self.retrieval_mode = RetrievalMode.coerce(self.retrieval_mode)
         self.answer_mode = AnswerMode.coerce(self.answer_mode)
         self.max_subquestions = max(1, min(int(self.max_subquestions), 5))
@@ -280,6 +330,10 @@ class ResearchResponse:
     @property
     def saved_sources(self) -> list[str]:
         return [source for source in self.answer_result.sources if source.startswith("[Saved")]
+
+    @property
+    def imported_sources(self) -> list[str]:
+        return [source for source in self.answer_result.sources if source.startswith("[Import")]
 
     @property
     def web_sources(self) -> list[str]:

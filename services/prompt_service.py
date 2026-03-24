@@ -135,6 +135,7 @@ def build_citation_sources(
 
     local_index = 1
     saved_index = 1
+    import_index = 1
     for chunk in chunks:
         key = (
             chunk.metadata.get("note_title", "Untitled"),
@@ -144,9 +145,13 @@ def build_citation_sources(
             continue
         seen_sources.add(key)
         is_saved = _is_saved_answer_chunk(chunk)
+        is_import = _is_imported_chunk(chunk)
         if is_saved:
             label = f"[Saved {saved_index}]"
             saved_index += 1
+        elif is_import:
+            label = f"[Import {import_index}]"
+            import_index += 1
         else:
             label = f"[Local {local_index}]"
             local_index += 1
@@ -294,12 +299,18 @@ def _format_local_context(chunks: list[RetrievedChunk]) -> str:
     parts: list[str] = []
     local_index = 1
     saved_index = 1
+    import_index = 1
     for chunk in chunks:
         title = chunk.metadata.get("note_title", "Untitled note")
         source_path = chunk.metadata.get("source_path", "unknown")
         heading_context = chunk.metadata.get("heading_context", "")
         section_line = f" | Section: {heading_context}" if heading_context else ""
-        source_kind = "Saved answer" if _is_saved_answer_chunk(chunk) else "Primary note"
+        if _is_saved_answer_chunk(chunk):
+            source_kind = "Saved answer"
+        elif _is_imported_chunk(chunk):
+            source_kind = "Imported content"
+        else:
+            source_kind = "Primary note"
         if chunk.metadata.get("linked_context"):
             context_kind = f"Linked {source_kind.lower()}"
         else:
@@ -307,6 +318,9 @@ def _format_local_context(chunks: list[RetrievedChunk]) -> str:
         if _is_saved_answer_chunk(chunk):
             label = f"[Saved {saved_index}]"
             saved_index += 1
+        elif _is_imported_chunk(chunk):
+            label = f"[Import {import_index}]"
+            import_index += 1
         else:
             label = f"[Local {local_index}]"
             local_index += 1
@@ -342,7 +356,12 @@ def _build_evidence_types(
     evidence_types: list[str] = []
     if any(_is_saved_answer_chunk(chunk) for chunk in chunks):
         evidence_types.append("saved_answer")
-    if any(not _is_saved_answer_chunk(chunk) for chunk in chunks):
+    if any(_is_imported_chunk(chunk) for chunk in chunks):
+        evidence_types.append("imported_content")
+    if any(
+        not _is_saved_answer_chunk(chunk) and not _is_imported_chunk(chunk)
+        for chunk in chunks
+    ):
         evidence_types.append("local_note")
     if web_results:
         evidence_types.append("web")
@@ -351,3 +370,7 @@ def _build_evidence_types(
 
 def _is_saved_answer_chunk(chunk: RetrievedChunk) -> bool:
     return str(chunk.metadata.get("source_kind", "")).strip().lower() == "saved_answer"
+
+
+def _is_imported_chunk(chunk: RetrievedChunk) -> bool:
+    return str(chunk.metadata.get("source_kind", "")).strip().lower() == "imported_content"

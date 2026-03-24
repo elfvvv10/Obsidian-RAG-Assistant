@@ -76,6 +76,9 @@ class Note:
     links: tuple[str, ...] = ()
     linked_note_keys: tuple[str, ...] = ()
     source_kind: str = "primary_note"
+    source_type: str = "note"
+    content_scope: str = "extended"
+    content_category: str = "non_curated_note"
 
 
 @dataclass(slots=True)
@@ -94,6 +97,9 @@ class Chunk:
     tags: tuple[str, ...] = ()
     linked_note_keys: tuple[str, ...] = ()
     source_kind: str = "primary_note"
+    source_type: str = "note"
+    content_scope: str = "extended"
+    content_category: str = "non_curated_note"
 
 
 @dataclass(slots=True)

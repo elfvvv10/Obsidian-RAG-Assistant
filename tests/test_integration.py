@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from embeddings import OllamaEmbeddingClient
 from llm import OllamaChatClient
 from main import run_index
 from retriever import Retriever
+from services.models import RetrievalScope
 from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
@@ -58,10 +60,11 @@ class IntegrationTests(unittest.TestCase):
             root = Path(tmp_dir)
             vault = root / "vault"
             vault.mkdir()
+            (vault / "knowledge").mkdir()
             (root / "output").mkdir()
             config = make_config(root)
 
-            (vault / "ai_agents.md").write_text(
+            (vault / "knowledge" / "ai_agents.md").write_text(
                 "---\n"
                 "tags: [ai, agents]\n"
                 "---\n\n"
@@ -83,10 +86,11 @@ class IntegrationTests(unittest.TestCase):
             result = agent.answer(
                 "What do my notes say about AI agents?",
                 options=RetrievalOptions(top_k=1, candidate_count=2),
+                retrieval_scope=RetrievalScope.KNOWLEDGE,
             )
 
             self.assertIn("AI Agents", result.answer)
-            self.assertIn("AI Agents (ai_agents.md)", result.sources)
+            self.assertIn("AI Agents (knowledge/ai_agents.md)", result.sources)
             self.assertNotIn("Gardening (gardening.md)", result.sources)
 
     def test_real_tag_filtering_changes_retrieved_results(self) -> None:
@@ -94,10 +98,11 @@ class IntegrationTests(unittest.TestCase):
             root = Path(tmp_dir)
             vault = root / "vault"
             vault.mkdir()
+            (vault / "knowledge").mkdir()
             (root / "output").mkdir()
             config = make_config(root)
 
-            (vault / "ai_agents.md").write_text(
+            (vault / "knowledge" / "ai_agents.md").write_text(
                 "---\n"
                 "tags: [agents]\n"
                 "---\n\n"
@@ -122,6 +127,7 @@ class IntegrationTests(unittest.TestCase):
                 "What do my notes say about agents?",
                 filters=RetrievalFilters(tag="agents"),
                 options=RetrievalOptions(top_k=2, candidate_count=2),
+                retrieval_scope=RetrievalScope.KNOWLEDGE,
             )
 
             self.assertEqual(len(filtered), 1)
@@ -132,15 +138,16 @@ class IntegrationTests(unittest.TestCase):
             root = Path(tmp_dir)
             vault = root / "vault"
             vault.mkdir()
+            (vault / "knowledge").mkdir()
             (root / "output").mkdir()
             config = make_config(root)
 
-            (vault / "ai_agents.md").write_text(
+            (vault / "knowledge" / "ai_agents.md").write_text(
                 "# AI Agents\n\n"
                 "AI agents use tools. See [[Local LLMs]].\n",
                 encoding="utf-8",
             )
-            (vault / "local_llms.md").write_text(
+            (vault / "knowledge" / "local_llms.md").write_text(
                 "# Local LLMs\n\n"
                 "Local LLMs are often run with Ollama. This connects back to [[AI Agents]].\n",
                 encoding="utf-8",
@@ -153,12 +160,71 @@ class IntegrationTests(unittest.TestCase):
             results = retriever.retrieve(
                 "What do my notes say about AI agents?",
                 options=RetrievalOptions(top_k=1, candidate_count=1, include_linked_notes=True),
+                retrieval_scope=RetrievalScope.KNOWLEDGE,
             )
 
             self.assertGreaterEqual(len(results), 2)
             self.assertIn(results[0].metadata["note_title"], {"AI Agents", "Local LLMs"})
             self.assertTrue(any(chunk.metadata.get("linked_context") for chunk in results[1:]))
             self.assertGreaterEqual(len({chunk.metadata.get("note_title") for chunk in results}), 2)
+
+    def test_knowledge_scope_excludes_non_curated_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            vault.mkdir()
+            (vault / "knowledge").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            (vault / "knowledge" / "agents.md").write_text("# Agents\n\nCurated agent note.", encoding="utf-8")
+            (vault / "scratch.md").write_text("# Scratch\n\nNon-curated agent note.", encoding="utf-8")
+
+            with patch("main.OllamaEmbeddingClient.embed_texts", side_effect=fake_embedding_for_texts):
+                run_index(config, reset_store=True)
+
+            retriever = Retriever(config, _StubEmbeddingClient(), VectorStore(config))
+            results = retriever.retrieve(
+                "What do my notes say about AI agents?",
+                options=RetrievalOptions(top_k=5, candidate_count=5),
+                retrieval_scope=RetrievalScope.KNOWLEDGE,
+            )
+
+            self.assertTrue(results)
+            self.assertTrue(all(chunk.metadata.get("content_scope") == "knowledge" for chunk in results))
+            self.assertTrue(all("scratch.md" not in str(chunk.metadata.get("source_path")) for chunk in results))
+
+    def test_extended_scope_can_include_non_curated_and_imported_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            vault.mkdir()
+            (vault / "knowledge").mkdir()
+            (vault / "ingested_webpages").mkdir()
+            (root / "output").mkdir()
+            config = replace(make_config(root), index_webpage_imports=True)
+
+            (vault / "knowledge" / "agents.md").write_text("# Agents\n\nCurated agent note.", encoding="utf-8")
+            (vault / "scratch.md").write_text("# Scratch\n\nNon-curated agent note.", encoding="utf-8")
+            (vault / "ingested_webpages" / "page.md").write_text(
+                '---\nsource_type: "webpage_import"\n---\n\n# Imported Page\n\nImported agent note.',
+                encoding="utf-8",
+            )
+
+            with patch("main.OllamaEmbeddingClient.embed_texts", side_effect=fake_embedding_for_texts):
+                run_index(config, reset_store=True)
+
+            retriever = Retriever(config, _StubEmbeddingClient(), VectorStore(config))
+            results = retriever.retrieve(
+                "What do my notes say about AI agents?",
+                options=RetrievalOptions(top_k=5, candidate_count=5),
+                retrieval_scope=RetrievalScope.EXTENDED,
+            )
+
+            categories = {chunk.metadata.get("content_category") for chunk in results}
+            self.assertIn("curated_knowledge", categories)
+            self.assertIn("non_curated_note", categories)
+            self.assertIn("generated_or_imported", categories)
 
 
 class _StubEmbeddingClient(OllamaEmbeddingClient):

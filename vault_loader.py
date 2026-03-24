@@ -32,6 +32,7 @@ def load_notes(vault_path: Path, excluded_paths: list[Path] | None = None) -> li
                 tags=tags,
                 links=links,
                 source_kind=_infer_source_kind(frontmatter),
+                source_type=_infer_source_type(frontmatter),
             )
         )
 
@@ -72,7 +73,14 @@ def _extract_title(file_path: Path, content: str) -> str:
 
 
 def _infer_source_kind(frontmatter: dict[str, object]) -> str:
-    source_type = str(frontmatter.get("source_type", "")).strip().lower()
+    source_type = _infer_source_type(frontmatter)
     if source_type in {"saved_answer", "research_session"}:
         return "saved_answer"
+    if source_type in {"webpage_import", "youtube_import"}:
+        return "imported_content"
     return "primary_note"
+
+
+def _infer_source_type(frontmatter: dict[str, object]) -> str:
+    source_type = str(frontmatter.get("source_type", "")).strip().lower()
+    return source_type or "note"

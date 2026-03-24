@@ -10,7 +10,7 @@ from unittest.mock import patch
 from config import AppConfig
 from retriever import Retriever
 from services.index_service import IndexService
-from services.models import QueryRequest, QueryResponse, RetrievalMode
+from services.models import QueryRequest, QueryResponse, RetrievalMode, RetrievalScope
 from services.query_service import QueryService
 from utils import AnswerResult, RetrievalOptions, RetrievedChunk
 
@@ -29,17 +29,19 @@ def make_config(root: Path) -> AppConfig:
 
 class UIFacingServiceTests(unittest.TestCase):
     def test_query_request_coerces_retrieval_mode(self) -> None:
-        request = QueryRequest(question="test", retrieval_mode="hybrid")
+        request = QueryRequest(question="test", retrieval_mode="hybrid", retrieval_scope="extended")
         self.assertEqual(request.retrieval_mode, RetrievalMode.HYBRID)
+        self.assertEqual(request.retrieval_scope, RetrievalScope.EXTENDED)
 
     def test_query_service_returns_debug_trace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             vault = root / "vault"
             vault.mkdir()
+            (vault / "knowledge").mkdir()
             (root / "output").mkdir()
             config = make_config(root)
-            (vault / "agents.md").write_text(
+            (vault / "knowledge" / "agents.md").write_text(
                 "# Agents\n\nAI agents use tools and retrieval.\n",
                 encoding="utf-8",
             )
@@ -70,11 +72,13 @@ class UIFacingServiceTests(unittest.TestCase):
             self.assertEqual(len(response.debug.primary_chunks), 1)
             self.assertTrue(response.debug.reranking_applied)
             self.assertEqual(len(response.retrieved_chunks), 1)
+            self.assertEqual(response.debug.retrieval_scope_requested, RetrievalScope.KNOWLEDGE)
             self.assertEqual(response.debug.web_query_strategy.value, "raw_question")
             self.assertEqual(response.debug.web_results_filtered_count, 0)
             self.assertEqual(response.debug.web_failure_reason, "")
             self.assertEqual(response.debug.web_attempts, [])
             self.assertFalse(response.debug.web_retry_used)
+            self.assertEqual(response.debug.curated_knowledge_chunks, 1)
 
     def test_query_service_save_preserves_existing_evidence_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

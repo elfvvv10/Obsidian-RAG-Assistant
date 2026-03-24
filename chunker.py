@@ -59,6 +59,9 @@ def chunk_notes(
                     tags=note.tags,
                     linked_note_keys=note.linked_note_keys,
                     source_kind=note.source_kind,
+                    source_type=note.source_type,
+                    content_scope=note.content_scope,
+                    content_category=note.content_category,
                 )
             )
 

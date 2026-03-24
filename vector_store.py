@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import chromadb
 from math import sqrt
-from pathlib import Path
 
 from config import AppConfig
 from utils import Chunk, RetrievalFilters, RetrievedChunk
 
 
-INDEX_SCHEMA_VERSION = "2026-obsidian-rag-schema-2"
+INDEX_SCHEMA_VERSION = "2026-obsidian-rag-schema-3"
 SAVED_ANSWER_DISTANCE_PENALTY = 0.12
 
 
@@ -50,6 +49,9 @@ class VectorStore:
                     "note_key": chunk.note_key,
                     "note_fingerprint": chunk.note_fingerprint,
                     "source_kind": chunk.source_kind,
+                    "source_type": chunk.source_type,
+                    "content_scope": chunk.content_scope,
+                    "content_category": chunk.content_category,
                     "tags_serialized": _serialize_tags(chunk.tags),
                     "linked_note_keys_serialized": _serialize_values(chunk.linked_note_keys),
                 }
@@ -63,6 +65,7 @@ class VectorStore:
         query_embedding: list[float],
         top_k: int,
         filters: RetrievalFilters | None = None,
+        retrieval_scope: str = "extended",
         include_saved_answers: bool | None = None,
     ) -> list[RetrievedChunk]:
         """Query the vector store and return retrieved chunks."""
@@ -71,6 +74,7 @@ class VectorStore:
                 query_embedding,
                 top_k,
                 filters or RetrievalFilters(),
+                retrieval_scope=retrieval_scope,
                 include_saved_answers=include_saved_answers,
             )
 
@@ -78,7 +82,7 @@ class VectorStore:
             query_embeddings=[query_embedding],
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
-            where=self._build_where(filters),
+            where=self._build_where(filters, retrieval_scope=retrieval_scope),
         )
 
         return self._to_retrieved_chunks(results)
@@ -105,12 +109,13 @@ class VectorStore:
     def get_all_chunks(
         self,
         filters: RetrievalFilters | None = None,
+        retrieval_scope: str = "extended",
         include_saved_answers: bool | None = None,
     ) -> list[tuple[str, dict[str, object], list[float]]]:
         """Return all chunk documents, metadata, and embeddings for filtered search."""
         results = self.collection.get(
             include=["documents", "metadatas", "embeddings"],
-            where=self._build_where(filters),
+            where=self._build_where(filters, retrieval_scope=retrieval_scope),
         )
 
         documents = results.get("documents", [])
@@ -130,6 +135,7 @@ class VectorStore:
         note_keys: list[str],
         *,
         max_chunks_per_note: int,
+        retrieval_scope: str = "extended",
         excluded_note_keys: set[str] | None = None,
     ) -> list[RetrievedChunk]:
         """Return a small number of chunks for the requested linked notes."""
@@ -141,7 +147,10 @@ class VectorStore:
                 continue
             results = self.collection.get(
                 include=["documents", "metadatas"],
-                where={"note_key": note_key},
+                where=self._combine_conditions(
+                    {"note_key": note_key},
+                    self._build_where(None, retrieval_scope=retrieval_scope),
+                ),
             )
             documents = results.get("documents", [])
             metadatas = results.get("metadatas", [])
@@ -174,12 +183,14 @@ class VectorStore:
         top_k: int,
         filters: RetrievalFilters,
         *,
+        retrieval_scope: str,
         include_saved_answers: bool | None,
     ) -> list[RetrievedChunk]:
         normalized_substring = filters.path_contains.lower() if filters.path_contains else None
         normalized_tag = filters.tag.lower() if filters.tag else None
         candidates = self.get_all_chunks(
             filters=RetrievalFilters(folder=filters.folder),
+            retrieval_scope=retrieval_scope,
             include_saved_answers=include_saved_answers,
         )
 
@@ -209,10 +220,26 @@ class VectorStore:
         )
         return filtered_candidates[:top_k]
 
-    def _build_where(self, filters: RetrievalFilters | None) -> dict[str, object] | None:
-        if not filters or not filters.folder:
+    def _build_where(
+        self,
+        filters: RetrievalFilters | None,
+        *,
+        retrieval_scope: str,
+    ) -> dict[str, object] | None:
+        conditions: list[dict[str, object]] = []
+        if filters and filters.folder:
+            conditions.append({"source_dir": filters.folder})
+        if retrieval_scope == "knowledge":
+            conditions.append({"content_scope": "knowledge"})
+        return self._combine_conditions(*conditions)
+
+    def _combine_conditions(self, *conditions: dict[str, object] | None) -> dict[str, object] | None:
+        filtered = [condition for condition in conditions if condition]
+        if not filtered:
             return None
-        return {"source_dir": filters.folder}
+        if len(filtered) == 1:
+            return filtered[0]
+        return {"$and": filtered}
 
     def _to_retrieved_chunks(self, results: dict[str, object]) -> list[RetrievedChunk]:
         documents = results.get("documents", [[]])[0]

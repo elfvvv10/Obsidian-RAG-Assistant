@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
 from reranker import rerank_chunks
+from services.models import RetrievalScope
 from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
@@ -41,15 +42,22 @@ class Retriever:
         query: str,
         filters: RetrievalFilters | None = None,
         options: RetrievalOptions | None = None,
+        retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE,
     ) -> list[RetrievedChunk]:
         """Return the top-k relevant chunks for a question."""
-        return self.retrieve_with_debug(query, filters=filters, options=options).final_chunks
+        return self.retrieve_with_debug(
+            query,
+            filters=filters,
+            options=options,
+            retrieval_scope=retrieval_scope,
+        ).final_chunks
 
     def retrieve_with_debug(
         self,
         query: str,
         filters: RetrievalFilters | None = None,
         options: RetrievalOptions | None = None,
+        retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE,
     ) -> RetrievalDebugResult:
         """Return retrieved chunks plus public intermediate retrieval details."""
         if self.vector_store.count() == 0:
@@ -60,11 +68,12 @@ class Retriever:
             query,
             filters,
             settings["candidate_count"],
+            retrieval_scope,
             settings["include_saved_answers"],
         )
         ranked_chunks = self._apply_reranking(query, candidates, settings)
         primary_chunks = self._select_primary_chunks(ranked_chunks, settings["top_k"])
-        final_chunks = self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"])
+        final_chunks = self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"], retrieval_scope)
         reranking_applied = bool(settings["rerank_enabled"] or settings["boost_tags"])
         return RetrievalDebugResult(
             initial_candidates=candidates,
@@ -112,6 +121,7 @@ class Retriever:
         query: str,
         filters: RetrievalFilters | None,
         candidate_count: int,
+        retrieval_scope: RetrievalScope,
         include_saved_answers: bool,
     ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_client.embed_text(query)
@@ -120,16 +130,29 @@ class Retriever:
                 query_embedding,
                 candidate_count,
                 filters=filters,
+                retrieval_scope=retrieval_scope.value,
                 include_saved_answers=include_saved_answers,
             )
         except TypeError as exc:
-            if "include_saved_answers" not in str(exc):
+            message = str(exc)
+            if "include_saved_answers" not in message and "retrieval_scope" not in message:
                 raise
-            return self.vector_store.query(
-                query_embedding,
-                candidate_count,
-                filters=filters,
-            )
+            try:
+                return self.vector_store.query(
+                    query_embedding,
+                    candidate_count,
+                    filters=filters,
+                    include_saved_answers=include_saved_answers,
+                )
+            except TypeError as inner_exc:
+                inner_message = str(inner_exc)
+                if "retrieval_scope" not in inner_message and "include_saved_answers" not in inner_message:
+                    raise
+                return self.vector_store.query(
+                    query_embedding,
+                    candidate_count,
+                    filters=filters,
+                )
 
     def _apply_reranking(
         self,
@@ -153,6 +176,7 @@ class Retriever:
         self,
         primary_chunks: list[RetrievedChunk],
         include_linked_notes: bool,
+        retrieval_scope: RetrievalScope,
     ) -> list[RetrievedChunk]:
         if not include_linked_notes:
             return primary_chunks
@@ -166,11 +190,21 @@ class Retriever:
             for chunk in primary_chunks
             if chunk.metadata.get("note_key")
         }
-        linked_chunks = self.vector_store.get_chunks_by_note_keys(
-            linked_note_keys[: self.config.max_linked_notes],
-            max_chunks_per_note=self.config.linked_note_chunks_per_note,
-            excluded_note_keys=primary_note_keys,
-        )
+        try:
+            linked_chunks = self.vector_store.get_chunks_by_note_keys(
+                linked_note_keys[: self.config.max_linked_notes],
+                max_chunks_per_note=self.config.linked_note_chunks_per_note,
+                retrieval_scope=retrieval_scope.value,
+                excluded_note_keys=primary_note_keys,
+            )
+        except TypeError as exc:
+            if "retrieval_scope" not in str(exc):
+                raise
+            linked_chunks = self.vector_store.get_chunks_by_note_keys(
+                linked_note_keys[: self.config.max_linked_notes],
+                max_chunks_per_note=self.config.linked_note_chunks_per_note,
+                excluded_note_keys=primary_note_keys,
+            )
         return primary_chunks + linked_chunks
 
 

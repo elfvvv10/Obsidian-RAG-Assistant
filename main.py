@@ -14,7 +14,14 @@ from saver import prompt_to_save, save_answer
 from services.common import build_note_alias_map, ensure_index_compatible, resolve_note_links
 from services.ingestion_service import IngestionService
 from services.index_service import IndexService
-from services.models import AnswerMode, IngestionRequest, QueryRequest, ResearchRequest, RetrievalMode
+from services.models import (
+    AnswerMode,
+    IngestionRequest,
+    QueryRequest,
+    ResearchRequest,
+    RetrievalMode,
+    RetrievalScope,
+)
 from services.query_service import QueryService
 from services.research_service import ResearchService
 from services.web_search_service import WebSearchService
@@ -53,6 +60,7 @@ def main() -> int:
                 candidate_count=args.candidate_count,
                 rerank=args.rerank,
                 auto_save=args.auto_save,
+                retrieval_scope=args.retrieval_scope,
                 retrieval_mode=args.retrieval_mode,
                 answer_mode=args.answer_mode,
             )
@@ -65,11 +73,11 @@ def main() -> int:
                 tag=args.tag,
                 boost_tags=args.boost_tag,
                 include_linked=args.include_linked,
-                include_saved_answers=args.include_saved_answers,
                 top_k=args.top_k,
                 candidate_count=args.candidate_count,
                 rerank=args.rerank,
                 auto_save=args.auto_save,
+                retrieval_scope=args.retrieval_scope,
                 retrieval_mode=args.retrieval_mode,
                 answer_mode=args.answer_mode,
                 max_subquestions=args.max_subquestions,
@@ -155,11 +163,11 @@ def run_ask(
     tag: str | None = None,
     boost_tags: list[str] | None = None,
     include_linked: bool = False,
-    include_saved_answers: bool = False,
     top_k: int | None = None,
     candidate_count: int | None = None,
     rerank: bool = False,
     auto_save: bool = False,
+    retrieval_scope: str = "knowledge",
     retrieval_mode: str = "local_only",
     answer_mode: str = "balanced",
 ) -> None:
@@ -186,7 +194,6 @@ def run_ask(
             if tag_value.strip()
         ),
         include_linked_notes=True if include_linked else None,
-        include_saved_answers=True if include_saved_answers else False,
     )
     query_service = QueryService(
         config,
@@ -201,6 +208,7 @@ def run_ask(
         filters=filters,
         options=options,
         auto_save=False,
+        retrieval_scope=retrieval_scope,
         retrieval_mode=retrieval_mode,
         answer_mode=answer_mode,
     )
@@ -248,11 +256,11 @@ def run_research(
     tag: str | None = None,
     boost_tags: list[str] | None = None,
     include_linked: bool = False,
-    include_saved_answers: bool = False,
     top_k: int | None = None,
     candidate_count: int | None = None,
     rerank: bool = False,
     auto_save: bool = False,
+    retrieval_scope: str = "knowledge",
     retrieval_mode: str = "local_only",
     answer_mode: str = "balanced",
     max_subquestions: int = 3,
@@ -275,13 +283,13 @@ def run_research(
             if tag_value.strip()
         ),
         include_linked_notes=True if include_linked else None,
-        include_saved_answers=True if include_saved_answers else False,
     )
     response = ResearchService(config).research(
         ResearchRequest(
             goal=question,
             filters=filters,
             options=options,
+            retrieval_scope=retrieval_scope,
             retrieval_mode=retrieval_mode,
             answer_mode=answer_mode,
             max_subquestions=max_subquestions,
@@ -421,11 +429,6 @@ def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
         help="Include context from notes linked by the primary retrieved notes.",
     )
     parser.add_argument(
-        "--include-saved-answers",
-        action="store_true",
-        help="Include indexed saved answers as secondary retrieval sources for this run.",
-    )
-    parser.add_argument(
         "--top-k",
         type=int,
         help="Override the number of final chunks used to answer the question",
@@ -444,6 +447,12 @@ def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
         "--auto-save",
         action="store_true",
         help="Save the generated answer without prompting.",
+    )
+    parser.add_argument(
+        "--retrieval-scope",
+        choices=[scope.value for scope in RetrievalScope],
+        default=RetrievalScope.KNOWLEDGE.value,
+        help="Choose curated knowledge only, or a broader extended local scope that may include lower-trust drafts, research outputs, and imports.",
     )
     parser.add_argument(
         "--retrieval-mode",

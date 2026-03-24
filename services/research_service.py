@@ -61,6 +61,7 @@ class ResearchService:
                     question=subquestion,
                     filters=request.filters,
                     options=request.options,
+                    retrieval_scope=request.retrieval_scope,
                     retrieval_mode=request.retrieval_mode,
                     answer_mode=request.answer_mode,
                 )

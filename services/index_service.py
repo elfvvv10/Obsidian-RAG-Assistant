@@ -29,7 +29,7 @@ class IndexService:
         excluded_paths = _build_excluded_paths(self.config)
 
         notes = load_notes(self.config.obsidian_vault_path, excluded_paths=excluded_paths)
-        notes = _classify_saved_answer_notes(notes, self.config)
+        notes = _classify_notes(notes, self.config)
         resolve_note_links(notes)
 
         embedding_client = OllamaEmbeddingClient(self.config)
@@ -169,17 +169,18 @@ def _select_chunks_to_index(
     return chunks_to_index
 
 
-def _classify_saved_answer_notes(notes: list[Note], config: AppConfig) -> list[Note]:
+def _classify_notes(notes: list[Note], config: AppConfig) -> list[Note]:
     classified_notes: list[Note] = []
     for note in notes:
-        inferred_kind = _infer_folder_source_kind(note.path, config)
-        if inferred_kind != note.source_kind:
-            classified_notes.append(replace(note, source_kind=inferred_kind))
-            continue
-        if inferred_kind == "saved_answer" and note.source_kind != "saved_answer":
-            classified_notes.append(replace(note, source_kind="saved_answer"))
-        else:
-            classified_notes.append(note)
+        classification = _classify_note_metadata(note.path, note.frontmatter or {}, note.source_kind, config)
+        classified_notes.append(
+            replace(
+                note,
+                source_kind=classification["source_kind"],
+                content_scope=classification["content_scope"],
+                content_category=classification["content_category"],
+            )
+        )
     return classified_notes
 
 
@@ -200,19 +201,57 @@ def _build_excluded_paths(config: AppConfig) -> list:
     return excluded_paths
 
 
-def _infer_folder_source_kind(note_path: str, config: AppConfig) -> str:
-    derived_prefixes: list[str] = []
-    for path in (config.draft_answers_path, config.research_sessions_path):
-        try:
-            relative = path.resolve().relative_to(config.obsidian_vault_path.resolve())
-        except ValueError:
-            continue
-        prefix = str(relative).replace("\\", "/").strip("/")
-        if prefix:
-            derived_prefixes.append(prefix)
-
+def _classify_note_metadata(
+    note_path: str,
+    frontmatter: dict[str, object],
+    source_kind: str,
+    config: AppConfig,
+) -> dict[str, str]:
     normalized = note_path.replace("\\", "/").strip("/")
-    for prefix in derived_prefixes:
-        if normalized == prefix or normalized.startswith(f"{prefix}/"):
-            return "saved_answer"
-    return "primary_note"
+    explicit_scope = str(frontmatter.get("content_scope", "")).strip().lower()
+    explicit_status = str(frontmatter.get("status", "")).strip().lower()
+
+    knowledge_prefix = _relative_prefix(config.curated_knowledge_path, config)
+    generated_prefixes = {
+        _relative_prefix(config.draft_answers_path, config),
+        _relative_prefix(config.research_sessions_path, config),
+        _relative_prefix(config.webpage_ingestion_path, config),
+        _relative_prefix(config.youtube_ingestion_path, config),
+    } - {""}
+
+    if explicit_scope in {"knowledge", "extended"}:
+        content_scope = explicit_scope
+    elif explicit_status == "approved":
+        content_scope = "knowledge"
+    elif knowledge_prefix and (normalized == knowledge_prefix or normalized.startswith(f"{knowledge_prefix}/")):
+        content_scope = "knowledge"
+    else:
+        content_scope = "extended"
+
+    if normalized in generated_prefixes or any(normalized.startswith(f"{prefix}/") for prefix in generated_prefixes):
+        content_category = "generated_or_imported"
+    elif content_scope == "knowledge":
+        content_category = "curated_knowledge"
+    else:
+        content_category = "non_curated_note"
+
+    inferred_source_kind = source_kind
+    if content_category == "generated_or_imported" and source_kind == "primary_note":
+        source_type = str(frontmatter.get("source_type", "")).strip().lower()
+        if source_type in {"webpage_import", "youtube_import"}:
+            inferred_source_kind = "imported_content"
+        elif source_type in {"saved_answer", "research_session"}:
+            inferred_source_kind = "saved_answer"
+    return {
+        "source_kind": inferred_source_kind,
+        "content_scope": content_scope,
+        "content_category": content_category,
+    }
+
+
+def _relative_prefix(path, config: AppConfig) -> str:
+    try:
+        relative = path.resolve().relative_to(config.obsidian_vault_path.resolve())
+    except ValueError:
+        return ""
+    return str(relative).replace("\\", "/").strip("/")
