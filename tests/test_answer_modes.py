@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from config import AppConfig
-from services.models import QueryRequest
+from services.models import CollaborationWorkflow, QueryRequest, WorkflowInput
 from services.query_service import QueryService
 from utils import RetrievedChunk
 from web_search import WebSearchResult
@@ -172,3 +172,31 @@ class AnswerModePolicyTests(unittest.TestCase):
         self.assertIn("Strict mode instructions", prompt_payload.user_prompt)
         self.assertEqual(response.debug.answer_mode_requested.value, "strict")
         self.assertEqual(response.debug.answer_mode_used.value, "strict")
+
+    def test_music_workflow_flows_into_prompt_payload(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Breakbeat often relies on syncopated drums.",
+                    metadata={"note_title": "Breakbeat Notes", "source_path": "breakbeat.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        service.ask(
+            QueryRequest(
+                question="Does this idea fit breakbeat?",
+                collaboration_workflow=CollaborationWorkflow.GENRE_FIT_REVIEW,
+                workflow_input=WorkflowInput(genre="breakbeat", bpm="135"),
+            )
+        )
+
+        prompt_payload = tracking["last_prompt"]
+        self.assertIsNotNone(prompt_payload)
+        self.assertEqual(prompt_payload.collaboration_workflow.value, "genre_fit_review")
+        self.assertIn("Collaboration workflow: genre_fit_review", prompt_payload.user_prompt)
+        self.assertIn("Assess likely genre or style fit", prompt_payload.user_prompt)
+        self.assertIn("Genre: breakbeat", prompt_payload.user_prompt)

@@ -23,6 +23,9 @@ def save_answer(
     source_type: str = "saved_answer",
     status: str = "draft",
     indexed: bool = False,
+    domain_profile: str | None = None,
+    workflow_type: str | None = None,
+    workflow_input: dict[str, str] | None = None,
 ) -> Path:
     """Write the answer and sources to a markdown file."""
     ensure_directory(output_path)
@@ -39,6 +42,9 @@ def save_answer(
         source_type=source_type,
         status=status,
         indexed=indexed,
+        domain_profile=domain_profile,
+        workflow_type=workflow_type,
+        workflow_input=workflow_input or {},
     )
     destination.write_text(body, encoding="utf-8")
     return destination
@@ -52,6 +58,9 @@ def _build_markdown(
     source_type: str,
     status: str,
     indexed: bool,
+    domain_profile: str | None,
+    workflow_type: str | None,
+    workflow_input: dict[str, str],
 ) -> str:
     sources = "\n".join(f"- {source}" for source in result.sources) or "- No sources available"
     summary = _build_summary(result.answer)
@@ -59,27 +68,52 @@ def _build_markdown(
     key_points_block = "\n".join(f"- {point}" for point in key_points) or "- No key points extracted"
     title = title_override.strip() if title_override and title_override.strip() else "Research Answer"
     timestamp = current_timestamp()
+    structured_input_block = _build_structured_input_block(workflow_input)
+    actionability_block = _build_actionability_block(workflow_type, result.answer)
+    inference_note = (
+        "This output includes explicitly labeled inference or stylistic extrapolation."
+        if "[Inference]" in result.answer
+        else "No explicit inference labels were used in this output."
+    )
+    workflow_section_title = _workflow_section_title(workflow_type)
+    frontmatter_lines = [
+        "---",
+        f'source_type: "{_escape_frontmatter(source_type)}"',
+        f'status: "{_escape_frontmatter(status)}"',
+        f"indexed: {'true' if indexed else 'false'}",
+        'created_by: "obsidian_rag_assistant"',
+        f'created_at: "{timestamp}"',
+        f'original_question: "{_escape_frontmatter(question)}"',
+        f'saved_at: "{timestamp}"',
+    ]
+    if domain_profile:
+        frontmatter_lines.append(f'domain_profile: "{_escape_frontmatter(domain_profile)}"')
+    if workflow_type:
+        frontmatter_lines.append(f'workflow_type: "{_escape_frontmatter(workflow_type)}"')
+    if workflow_input:
+        frontmatter_lines.append("workflow_input:")
+        for key, value in workflow_input.items():
+            frontmatter_lines.append(f'  {key}: "{_escape_frontmatter(value)}"')
+    frontmatter = "\n".join(frontmatter_lines) + "\n---"
 
     return (
-        "---\n"
-        f'source_type: "{_escape_frontmatter(source_type)}"\n'
-        f'status: "{_escape_frontmatter(status)}"\n'
-        f"indexed: {'true' if indexed else 'false'}\n"
-        'created_by: "obsidian_rag_assistant"\n'
-        f'created_at: "{timestamp}"\n'
-        f'original_question: "{_escape_frontmatter(question)}"\n'
-        f'saved_at: "{timestamp}"\n'
-        "---\n\n"
+        f"{frontmatter}\n\n"
         f"# {title}\n\n"
         f"**Timestamp:** {timestamp}\n\n"
+        f"**Workflow:** {workflow_type or 'general_ask'}\n\n"
         f"## Question\n\n"
         f"{question}\n\n"
+        f"## Input Summary\n\n"
+        f"{structured_input_block}\n\n"
         f"## Summary\n\n"
         f"{summary}\n\n"
-        f"## Answer\n\n"
+        f"## {workflow_section_title}\n\n"
         f"{result.answer}\n\n"
         f"## Key Points\n\n"
         f"{key_points_block}\n\n"
+        f"## Inference Notes\n\n"
+        f"{inference_note}\n\n"
+        f"{actionability_block}\n\n"
         f"## Sources\n\n"
         f"{sources}\n"
     )
@@ -130,3 +164,35 @@ def _build_key_points(answer: str) -> list[str]:
 
 def _escape_frontmatter(value: str) -> str:
     return value.replace('"', '\\"')
+
+
+def _build_structured_input_block(workflow_input: dict[str, str]) -> str:
+    if not workflow_input:
+        return "- No additional structured workflow fields were provided."
+    return "\n".join(
+        f"- {key.replace('_', ' ').title()}: {value}"
+        for key, value in workflow_input.items()
+    )
+
+
+def _workflow_section_title(workflow_type: str | None) -> str:
+    return {
+        "genre_fit_review": "Genre Fit Review",
+        "track_concept_critique": "Track Concept Critique",
+        "arrangement_planner": "Arrangement Plan",
+        "sound_design_brainstorm": "Sound Design Brainstorm",
+        "research_session": "Research Session",
+    }.get(workflow_type or "", "Answer")
+
+
+def _build_actionability_block(workflow_type: str | None, answer: str) -> str:
+    section_title = {
+        "genre_fit_review": "## Style Alignment Notes",
+        "track_concept_critique": "## Suggested Next Steps",
+        "arrangement_planner": "## Production Plan Notes",
+        "sound_design_brainstorm": "## Practical Production Notes",
+        "research_session": "## Research Follow-Up",
+    }.get(workflow_type or "", "## Action Notes")
+    points = _build_key_points(answer)
+    point_lines = "\n".join(f"- {point}" for point in points) or "- No action notes extracted."
+    return f"{section_title}\n\n{point_lines}"

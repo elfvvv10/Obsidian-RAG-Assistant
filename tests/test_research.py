@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from config import AppConfig
-from services.models import QueryDebugInfo, QueryResponse, ResearchRequest
+from services.models import QueryDebugInfo, QueryResponse, ResearchRequest, WorkflowInput
 from services.research_service import ResearchService
 from utils import AnswerResult, RetrievedChunk
 from web_search import WebSearchResult
@@ -92,6 +92,20 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertIn('source_type: "research_session"', contents)
         self.assertIn('status: "research"', contents)
         self.assertIn("indexed: false", contents)
+        self.assertIn('workflow_type: "research_session"', contents)
+
+    def test_research_prompt_receives_music_workflow_context(self) -> None:
+        service, tracking = make_research_service()
+
+        service.research(
+            ResearchRequest(
+                goal="Compare melodic techno arrangement conventions",
+                workflow_input=WorkflowInput(genre="melodic techno", track_length="6:00"),
+            )
+        )
+
+        self.assertIn("Domain profile: electronic_music", tracking["last_plan_prompt"])
+        self.assertIn("Genre: melodic techno", tracking["last_plan_prompt"])
 
 
 def make_research_service(
@@ -99,7 +113,7 @@ def make_research_service(
     synthesis_text: str = "[Local 1] My notes say agents use tools. [Web 1] adds recent context.",
     all_weak: bool = False,
 ) -> tuple[ResearchService, dict[str, int]]:
-    tracking = {"plan_calls": 0, "synthesis_calls": 0, "query_calls": 0}
+    tracking = {"plan_calls": 0, "synthesis_calls": 0, "query_calls": 0, "last_plan_prompt": ""}
 
     class StubChatClient:
         def __init__(self, config: AppConfig) -> None:
@@ -108,6 +122,7 @@ def make_research_service(
         def answer_with_prompt(self, prompt_payload):
             if "Generate" in prompt_payload.user_prompt and "subquestions" in prompt_payload.user_prompt:
                 tracking["plan_calls"] += 1
+                tracking["last_plan_prompt"] = prompt_payload.user_prompt
                 return (
                     "What do my notes say about AI agents?\n"
                     "What recent external context is relevant to AI agents?"

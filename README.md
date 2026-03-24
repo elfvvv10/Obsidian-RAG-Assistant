@@ -1,6 +1,6 @@
-# Obsidian RAG Assistant
+# Obsidian Electronic Music Research Assistant
 
-A local-first Python Obsidian RAG assistant that runs through a CLI or a lightweight local Streamlit UI, using Ollama for inference and ChromaDB for vector search, with optional external web evidence when enabled.
+A local-first Python Obsidian RAG assistant for electronic music research and collaboration. It runs through a CLI or a lightweight local Streamlit UI, uses Ollama for inference and ChromaDB for vector search, and can optionally pull in external web evidence when enabled.
 
 ## Features
 
@@ -17,6 +17,8 @@ A local-first Python Obsidian RAG assistant that runs through a CLI or a lightwe
 - Generates grounded answers with a local Ollama chat model
 - Supports answer modes for stricter or more exploratory answer behavior
 - Supports a visible research mode that decomposes a goal into explicit subquestions
+- Adds an always-on electronic music collaboration persona and vocabulary layer
+- Supports music collaboration workflows such as genre-fit review, track concept critique, arrangement planning, sound design brainstorming, and research sessions
 - Labels local sources, web sources, and inference more explicitly
 - Supports retrieval scopes so you can search only curated knowledge or a broader extended set of notes
 - Shows source note references in the terminal
@@ -64,6 +66,10 @@ External content ingestion is handled as a separate workflow:
 
 The app now also includes a thin service layer so both the CLI and UI can share the same orchestration path without duplicating business logic.
 
+Music-specialized collaboration is handled as a thin orchestration layer above the current query and research services:
+
+`Workflow selection + optional music context -> workflow service -> prompt policies + save-path mapping -> query or research service`
+
 Research mode is handled as a separate orchestration path above normal direct Q&A:
 
 `Goal -> research service -> subquestion plan -> repeated query/answer steps -> final synthesis -> optional save-back`
@@ -83,7 +89,8 @@ Core modules:
 - `services/ingestion_helpers.py`: shared note-building and collision-safe save helpers for imported content
 - `services/webpage_ingestion_service.py`: webpage fetch, text extraction, and note creation
 - `services/youtube_ingestion_service.py`: YouTube transcript retrieval and note creation
-- `services/prompt_service.py`: answer-mode prompt policies, citation labels, and inference guidance
+- `services/prompt_service.py`: answer-mode prompt policies, music workflow guidance, citation labels, and inference guidance
+- `services/music_workflow_service.py`: workflow routing, prompt context shaping, and workflow-specific draft/research save destinations
 - `streamlit_app.py`: lightweight local UI
 - `vault_loader.py`: Markdown vault scanning
 - `chunker.py`: configurable Markdown-aware and sentence-aware chunk creation
@@ -279,6 +286,26 @@ The app will:
 4. Print the answer and sources in the terminal
 5. Ask whether you want to save the answer as a Markdown note
 
+## Music Collaboration Workflows
+
+The app is now oriented toward electronic music creation and research. The default assistant behavior assumes music-production context, including genre/style fit, BPM, groove, arrangement sections, sound design, layering, transitions, bass design, drum programming, references, mood, and energy.
+
+The Streamlit UI supports these workflows:
+
+- `General Ask`: quick producer-facing collaboration using your notes and optional web evidence
+- `Genre Fit Review`: assess whether an idea fits a target style and identify style mismatches or missing cues
+- `Track Concept Critique`: pressure-test a concept, clarify weaknesses, and suggest next production moves
+- `Arrangement Planner`: turn a rough idea into a section-by-section production plan
+- `Sound Design Brainstorm`: explore synth, drum, bass, texture, and FX directions
+- `Research Session`: a visibly deeper multi-step workflow that can break a topic into subquestions and synthesize broader evidence
+
+These workflows reuse the same trust model:
+
+- retrieval scope still controls which local content is eligible for search
+- retrieval mode still controls whether web evidence is allowed
+- answer mode still controls how far the model can go beyond direct evidence
+- local sources, web sources, saved drafts, and inference remain labeled separately
+
 ## Research Mode
 
 Research mode keeps the current direct ask flow intact, but adds a more structured workflow for bigger questions:
@@ -300,6 +327,7 @@ Research mode differs from direct ask mode in two important ways:
 
 - it is multi-step and inspectable rather than a single retrieval-and-answer pass
 - it reuses the existing query stack for each subquestion instead of hiding everything inside one large model call
+- in the UI it is presented as a distinct `Research Session` workflow rather than a normal quick collaboration response
 
 It is still intentionally bounded:
 
@@ -341,6 +369,12 @@ Warnings now distinguish between provider failures, zero provider results, and r
 - `strict`: use only retrieved evidence, prefer refusal when support is missing, and enforce the strongest citation discipline.
 - `balanced`: evidence first, with limited reasoning to connect supported ideas. If the answer goes beyond direct evidence, it should be labeled with `[Inference]`.
 - `exploratory`: evidence plus broader synthesis and extrapolation, with inference explicitly labeled using `[Inference]`.
+
+In the electronic music domain, these modes behave like this:
+
+- `strict`: evidence-grounded genre, arrangement, or production guidance only; explicitly says when support is weak
+- `balanced`: evidence-first collaboration with modest production reasoning
+- `exploratory`: broader creative synthesis and stylistic extrapolation, with `[Inference]` labels
 
 Answer mode controls how the model is allowed to write the answer. Retrieval mode controls which evidence sources are available in the first place.
 
@@ -408,11 +442,11 @@ streamlit run streamlit_app.py
 The UI includes four main areas:
 
 - `Sidebar`: query filters and retrieval controls such as folder, path text, tag, top-k, reranking, linked-note expansion, auto-save, retrieval mode, and answer mode
-- `Ask`: question input, a visible workflow toggle for `Direct Ask` or `Research Mode`, a retrieval-scope control, answer display, separate source sections, save actions, linked-note context, and an optional debug view of retrieval stages
+- `Ask`: producer-facing prompt input, a workflow selector for `General Ask`, `Genre Fit Review`, `Track Concept Critique`, `Arrangement Planner`, `Sound Design Brainstorm`, and `Research Session`, plus optional music-context fields such as genre, BPM, references, mood, arrangement notes, and sound palette
 - `Ask`: when web search is attempted, the UI can also show the actual web query used, whether a retry was attempted, and a brief explanation when no web sources were included
 - `Ask`: retrieved local content is separated into curated knowledge, non-curated notes, generated draft sources, imported sources, and web sources where applicable
 - `Ask`: debug/status output shows the current retrieval scope and separate counts for curated knowledge, non-curated notes, and generated/imported content
-- `Ask`: in research mode, the UI shows the generated subquestions, step-by-step findings, and the final synthesized answer
+- `Ask`: `Research Session` stays visibly distinct and shows generated subquestions, step-by-step findings, and the final synthesized answer
 - `Ingest`: paste a webpage URL or YouTube URL, save it into the vault, and optionally trigger indexing right away
 - `Index`: readiness messages plus build and rebuild actions
 - `Settings / Debug`: active models, paths, app readiness, index compatibility, and the debug toggle
@@ -427,21 +461,33 @@ After each answer, the CLI prompts:
 Save this answer to your Obsidian output folder? (y/n):
 ```
 
-If you answer `y`, or if auto-save is enabled, the app creates a Markdown note in your draft answers folder containing:
+If you answer `y`, or if auto-save is enabled, the app creates a Markdown note in a workflow-oriented draft or research folder containing:
 
 - The original question
+- The workflow type and domain profile
+- Any structured music-workflow input that was provided
 - A short summary
 - The full answer
 - Key points
+- Inference notes
 - Sources used
 
 If you save the same question repeatedly, the app keeps existing notes and creates deterministic suffixes such as `-answer-2.md`, `-answer-3.md`, and so on.
 
 In the Streamlit UI, you can also provide an optional title override before saving. That title is used for the note heading and filename slug, while the underlying save logic stays the same.
 
-Saved answer notes also include lightweight frontmatter metadata such as `source_type`, `status`, `indexed`, `created_by`, `created_at`, the original question, and the save timestamp so they can be recognized safely later if you enable indexing for them.
+Saved answer notes also include lightweight frontmatter metadata such as `source_type`, `status`, `indexed`, `created_by`, `created_at`, the original question, the save timestamp, `domain_profile`, `workflow_type`, and any structured workflow fields so they can be recognized safely later if you enable indexing for them.
 
-Research-mode saves go to `RESEARCH_SESSIONS_FOLDER` by default, and use similar metadata with `source_type: "research_session"` so they remain visible as draft workflow output rather than curated knowledge.
+The default save destinations for this step are:
+
+- `Drafts/General Asks/`
+- `Drafts/Genre Fit Reviews/`
+- `Drafts/Track Concept Critiques/`
+- `Drafts/Arrangement Plans/`
+- `Drafts/Sound Design Brainstorms/`
+- `Research Sessions/`
+
+This keeps the draft-vs-curated boundary clean. Workflow outputs remain reviewable working material rather than being treated as curated knowledge automatically.
 
 ## Example Workflow
 
@@ -451,21 +497,36 @@ python main.py index
 python main.py ask "What themes recur in my product notes?"
 ```
 
-If you keep the sample settings, direct saved answers will appear in:
+If you keep the sample settings, direct saved answers will appear under workflow-oriented draft folders inside the configured output path, and research outputs will appear in:
 
 ```text
-sample_vault/draft_answers/
+sample_vault/research_sessions/
 ```
 
-The default trust-oriented folder layout is:
+A recommended vault structure for electronic music production work is:
 
 ```text
 sample_vault/
-├── draft_answers/
-├── research_sessions/
-├── ingested_webpages/
-├── ingested_youtube/
-└── knowledge/
+├── Knowledge/
+│   ├── Genres/
+│   ├── Arrangement/
+│   ├── Sound Design/
+│   ├── Drums and Groove/
+│   ├── Mixing/
+│   └── References/
+├── Projects/
+│   ├── Track Ideas/
+│   └── Current Tracks/
+├── Imports/
+│   ├── Web Imports/
+│   └── YouTube Imports/
+├── Drafts/
+│   ├── General Asks/
+│   ├── Genre Fit Reviews/
+│   ├── Track Concept Critiques/
+│   ├── Arrangement Plans/
+│   └── Sound Design Brainstorms/
+└── Research Sessions/
 ```
 
 By default, notes in the dedicated draft, research-session, and import folders are excluded from indexing so generated or imported material does not silently become durable knowledge.

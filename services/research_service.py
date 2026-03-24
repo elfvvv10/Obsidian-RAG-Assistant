@@ -7,13 +7,18 @@ import re
 from config import AppConfig
 from llm import OllamaChatClient
 from saver import save_answer
+from services.music_workflow_service import MusicWorkflowService
 from services.models import (
     AnswerMode,
+    CollaborationWorkflow,
+    DomainProfile,
     QueryRequest,
     QueryResponse,
     ResearchRequest,
     ResearchResponse,
     ResearchStepResult,
+    RetrievalMode,
+    WorkflowInput,
 )
 from services.prompt_service import PromptService, build_citation_sources, enforce_citation_summary
 from services.query_service import QueryService
@@ -39,19 +44,23 @@ class ResearchService:
         self.query_service_cls = query_service_cls
         self.chat_client_cls = chat_client_cls
         self.prompt_service_cls = prompt_service_cls
+        self.music_workflow_service = MusicWorkflowService(config)
 
     def research(self, request: ResearchRequest) -> ResearchResponse:
         """Run a bounded multi-step research workflow and return structured results."""
         query_service = self.query_service_cls(self.config)
         prompt_service = self.prompt_service_cls()
         chat_client = self.chat_client_cls(self.config)
+        workflow_plan = self.music_workflow_service.build_research_plan(request)
 
         subquestions, planning_notes = self._generate_subquestions(
-            request.goal,
+            workflow_plan.prompt_text,
             answer_mode=request.answer_mode,
             max_subquestions=request.max_subquestions,
             chat_client=chat_client,
             prompt_service=prompt_service,
+            domain_profile=request.domain_profile,
+            workflow_input=request.workflow_input,
         )
 
         steps: list[ResearchStepResult] = []
@@ -64,6 +73,9 @@ class ResearchService:
                     retrieval_scope=request.retrieval_scope,
                     retrieval_mode=request.retrieval_mode,
                     answer_mode=request.answer_mode,
+                    domain_profile=request.domain_profile,
+                    collaboration_workflow=request.collaboration_workflow,
+                    workflow_input=request.workflow_input,
                 )
             )
             steps.append(ResearchStepResult(subquestion=subquestion, response=step_response))
@@ -75,19 +87,24 @@ class ResearchService:
             retrieval_mode=request.retrieval_mode,
             chat_client=chat_client,
             prompt_service=prompt_service,
+            domain_profile=request.domain_profile,
+            workflow_input=request.workflow_input,
         )
 
         warnings = list(dict.fromkeys(planning_notes + final_warnings + _collect_step_warnings(steps)))
         saved_path = None
         if request.auto_save or self.config.auto_save_answer:
             saved_path = save_answer(
-                self.config.research_sessions_path,
+                workflow_plan.save_path,
                 request.goal,
                 final_answer_result,
                 title_override=request.save_title,
                 source_type="research_session",
                 status="research",
                 indexed=False,
+                domain_profile=request.domain_profile.value,
+                workflow_type=request.collaboration_workflow.value,
+                workflow_input=request.workflow_input.as_dict(),
             )
             logger.info("Saved research answer to %s", saved_path)
 
@@ -99,6 +116,9 @@ class ResearchService:
             warnings=warnings,
             saved_path=saved_path,
             planning_notes=planning_notes,
+            domain_profile=request.domain_profile,
+            collaboration_workflow=request.collaboration_workflow,
+            workflow_input=request.workflow_input,
         )
 
     def save(
@@ -111,13 +131,26 @@ class ResearchService:
     ) -> ResearchResponse:
         """Persist an existing research answer result and preserve prior workflow state."""
         saved_path = save_answer(
-            self.config.research_sessions_path,
+            self.music_workflow_service.default_save_path(
+                existing_response.collaboration_workflow
+                if existing_response is not None
+                else CollaborationWorkflow.RESEARCH_SESSION
+            ),
             goal,
             answer_result,
             title_override=title_override,
             source_type="research_session",
             status="research",
             indexed=False,
+            domain_profile=(
+                existing_response.domain_profile.value if existing_response is not None else None
+            ),
+            workflow_type=(
+                existing_response.collaboration_workflow.value if existing_response is not None else None
+            ),
+            workflow_input=(
+                existing_response.workflow_input.as_dict() if existing_response is not None else None
+            ),
         )
         logger.info("Saved research answer to %s", saved_path)
         if existing_response is not None:
@@ -128,6 +161,21 @@ class ResearchService:
             steps=[],
             answer_result=answer_result,
             saved_path=saved_path,
+            domain_profile=(
+                existing_response.domain_profile
+                if existing_response is not None
+                else DomainProfile.ELECTRONIC_MUSIC
+            ),
+            collaboration_workflow=(
+                existing_response.collaboration_workflow
+                if existing_response is not None
+                else CollaborationWorkflow.RESEARCH_SESSION
+            ),
+            workflow_input=(
+                existing_response.workflow_input
+                if existing_response is not None
+                else WorkflowInput()
+            ),
         )
 
     def _generate_subquestions(
@@ -138,12 +186,16 @@ class ResearchService:
         max_subquestions: int,
         chat_client: OllamaChatClient,
         prompt_service: PromptService,
+        domain_profile: DomainProfile,
+        workflow_input: WorkflowInput,
     ) -> tuple[list[str], list[str]]:
         planning_notes: list[str] = []
         payload = prompt_service.build_research_plan_payload(
             goal,
             answer_mode=answer_mode,
             max_subquestions=max_subquestions,
+            domain_profile=domain_profile,
+            workflow_input=workflow_input,
         )
         try:
             raw_plan = chat_client.answer_with_prompt(payload)
@@ -164,9 +216,11 @@ class ResearchService:
         steps: list[ResearchStepResult],
         *,
         answer_mode: AnswerMode,
-        retrieval_mode,
+        retrieval_mode: RetrievalMode,
         chat_client: OllamaChatClient,
         prompt_service: PromptService,
+        domain_profile: DomainProfile,
+        workflow_input: WorkflowInput,
     ) -> tuple[AnswerResult, list[str]]:
         combined_chunks = _dedupe_chunks([chunk for step in steps for chunk in step.response.retrieved_chunks])
         combined_web = _dedupe_web_results([result for step in steps for result in step.response.web_results])
@@ -209,6 +263,8 @@ class ResearchService:
             answer_mode=answer_mode,
             retrieval_mode=retrieval_mode,
             citation_sources=citation_sources,
+            domain_profile=domain_profile,
+            workflow_input=workflow_input,
         )
         answer = chat_client.answer_with_prompt(payload)
         answer = enforce_citation_summary(answer, tuple(citation_labels), answer_mode)

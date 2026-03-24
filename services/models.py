@@ -118,6 +118,88 @@ class WorkflowMode(StrEnum):
     RESEARCH = "research"
 
 
+class DomainProfile(StrEnum):
+    """Supported assistant domain profiles."""
+
+    ELECTRONIC_MUSIC = "electronic_music"
+
+    @classmethod
+    def coerce(cls, value: "DomainProfile | str | None") -> "DomainProfile":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls.ELECTRONIC_MUSIC
+        normalized = str(value).strip().lower()
+        for profile in cls:
+            if profile.value == normalized:
+                return profile
+        raise ValueError(
+            f"Unsupported domain profile: {value}. Expected one of: "
+            f"{', '.join(profile.value for profile in cls)}."
+        )
+
+
+class CollaborationWorkflow(StrEnum):
+    """Supported music collaboration workflows."""
+
+    GENERAL_ASK = "general_ask"
+    GENRE_FIT_REVIEW = "genre_fit_review"
+    TRACK_CONCEPT_CRITIQUE = "track_concept_critique"
+    ARRANGEMENT_PLANNER = "arrangement_planner"
+    SOUND_DESIGN_BRAINSTORM = "sound_design_brainstorm"
+    RESEARCH_SESSION = "research_session"
+
+    @classmethod
+    def coerce(cls, value: "CollaborationWorkflow | str | None") -> "CollaborationWorkflow":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls.GENERAL_ASK
+        normalized = str(value).strip().lower()
+        for workflow in cls:
+            if workflow.value == normalized:
+                return workflow
+        raise ValueError(
+            f"Unsupported collaboration workflow: {value}. Expected one of: "
+            f"{', '.join(workflow.value for workflow in cls)}."
+        )
+
+
+@dataclass(slots=True)
+class WorkflowInput:
+    """Optional structured fields that support music collaboration workflows."""
+
+    genre: str | None = None
+    bpm: str | None = None
+    references: str | None = None
+    mood: str | None = None
+    arrangement_notes: str | None = None
+    instrumentation: str | None = None
+    sound_palette: str | None = None
+    energy_goal: str | None = None
+    track_length: str | None = None
+    role_of_key_elements: str | None = None
+
+    def as_dict(self) -> dict[str, str]:
+        """Return only filled workflow input fields."""
+        return {
+            key: value.strip()
+            for key, value in {
+                "genre": self.genre,
+                "bpm": self.bpm,
+                "references": self.references,
+                "mood": self.mood,
+                "arrangement_notes": self.arrangement_notes,
+                "instrumentation": self.instrumentation,
+                "sound_palette": self.sound_palette,
+                "energy_goal": self.energy_goal,
+                "track_length": self.track_length,
+                "role_of_key_elements": self.role_of_key_elements,
+            }.items()
+            if value and value.strip()
+        }
+
+
 @dataclass(slots=True)
 class QueryRequest:
     """Structured request for answering a question."""
@@ -130,11 +212,16 @@ class QueryRequest:
     retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE
     retrieval_mode: RetrievalMode = RetrievalMode.LOCAL_ONLY
     answer_mode: AnswerMode = AnswerMode.BALANCED
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
+    collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK
+    workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
 
     def __post_init__(self) -> None:
         self.retrieval_scope = RetrievalScope.coerce(self.retrieval_scope)
         self.retrieval_mode = RetrievalMode.coerce(self.retrieval_mode)
         self.answer_mode = AnswerMode.coerce(self.answer_mode)
+        self.domain_profile = DomainProfile.coerce(self.domain_profile)
+        self.collaboration_workflow = CollaborationWorkflow.coerce(self.collaboration_workflow)
 
 
 @dataclass(slots=True)
@@ -182,6 +269,9 @@ class QueryResponse:
     web_results: list[WebSearchResult] = field(default_factory=list)
     saved_path: Path | None = None
     debug: QueryDebugInfo = field(default_factory=QueryDebugInfo)
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
+    collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK
+    workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
 
     @property
     def answer(self) -> str:
@@ -265,12 +355,17 @@ class ResearchRequest:
     max_subquestions: int = 3
     auto_save: bool = False
     save_title: str | None = None
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
+    collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.RESEARCH_SESSION
+    workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
 
     def __post_init__(self) -> None:
         self.retrieval_scope = RetrievalScope.coerce(self.retrieval_scope)
         self.retrieval_mode = RetrievalMode.coerce(self.retrieval_mode)
         self.answer_mode = AnswerMode.coerce(self.answer_mode)
         self.max_subquestions = max(1, min(int(self.max_subquestions), 5))
+        self.domain_profile = DomainProfile.coerce(self.domain_profile)
+        self.collaboration_workflow = CollaborationWorkflow.coerce(self.collaboration_workflow)
 
 
 @dataclass(slots=True)
@@ -293,6 +388,9 @@ class ResearchResponse:
     warnings: list[str] = field(default_factory=list)
     saved_path: Path | None = None
     planning_notes: list[str] = field(default_factory=list)
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
+    collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.RESEARCH_SESSION
+    workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
 
     @property
     def answer(self) -> str:

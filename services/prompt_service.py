@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from services.models import AnswerMode, RetrievalMode
+from services.models import (
+    AnswerMode,
+    CollaborationWorkflow,
+    DomainProfile,
+    RetrievalMode,
+    WorkflowInput,
+)
 from utils import RetrievedChunk
 from web_search import WebSearchResult
 
@@ -18,6 +24,8 @@ class PromptPayload:
     answer_mode: AnswerMode
     citation_labels: tuple[str, ...]
     evidence_types_used: tuple[str, ...]
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
+    collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK
 
 
 class PromptService:
@@ -32,14 +40,22 @@ class PromptService:
         retrieval_mode: RetrievalMode,
         answer_mode: AnswerMode,
         local_retrieval_weak: bool,
+        domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+        collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
+        workflow_input: WorkflowInput | None = None,
         web_query_used: str = "",
         web_query_strategy: str = "raw_question",
         web_alignment_note: str = "",
     ) -> PromptPayload:
         citation_sources, citation_labels = build_citation_sources(chunks, web_results)
         evidence_types_used = _build_evidence_types(chunks, web_results)
+        workflow_input = workflow_input or WorkflowInput()
         return PromptPayload(
-            system_prompt=_build_system_prompt(answer_mode),
+            system_prompt=_build_system_prompt(
+                answer_mode,
+                domain_profile=domain_profile,
+                collaboration_workflow=collaboration_workflow,
+            ),
             user_prompt=_build_user_prompt(
                 question,
                 chunks,
@@ -47,6 +63,9 @@ class PromptService:
                 retrieval_mode=retrieval_mode,
                 answer_mode=answer_mode,
                 local_retrieval_weak=local_retrieval_weak,
+                domain_profile=domain_profile,
+                collaboration_workflow=collaboration_workflow,
+                workflow_input=workflow_input,
                 citation_sources=citation_sources,
                 web_query_used=web_query_used,
                 web_query_strategy=web_query_strategy,
@@ -55,6 +74,8 @@ class PromptService:
             answer_mode=answer_mode,
             citation_labels=tuple(citation_labels),
             evidence_types_used=evidence_types_used,
+            domain_profile=domain_profile,
+            collaboration_workflow=collaboration_workflow,
         )
 
     def build_research_plan_payload(
@@ -63,23 +84,31 @@ class PromptService:
         *,
         answer_mode: AnswerMode,
         max_subquestions: int,
+        domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+        workflow_input: WorkflowInput | None = None,
     ) -> PromptPayload:
         """Build a lightweight planning prompt for subquestion generation."""
+        workflow_input = workflow_input or WorkflowInput()
         return PromptPayload(
             system_prompt=(
-                "You are planning an explicit research workflow for an Obsidian-based research assistant. "
+                "You are planning an explicit research workflow for an Obsidian-based electronic music research assistant. "
                 "Break the user's goal into focused, evidence-seeking subquestions. "
                 "Be concrete, avoid overlap, and do not answer the question yet."
             ),
             user_prompt=(
                 f"Goal: {goal}\n"
+                f"Domain profile: {domain_profile.value}\n"
                 f"Answer mode: {answer_mode.value}\n"
+                f"Structured workflow context:\n{_format_workflow_input(workflow_input)}\n"
                 f"Generate {max_subquestions} or fewer focused subquestions.\n"
+                "Keep the subquestions useful for electronic music production, critique, arrangement, sound design, or style research when relevant.\n"
                 "Return one subquestion per line with no numbering or extra commentary."
             ),
             answer_mode=answer_mode,
             citation_labels=(),
             evidence_types_used=(),
+            domain_profile=domain_profile,
+            collaboration_workflow=CollaborationWorkflow.RESEARCH_SESSION,
         )
 
     def build_research_synthesis_payload(
@@ -90,8 +119,11 @@ class PromptService:
         answer_mode: AnswerMode,
         retrieval_mode: RetrievalMode,
         citation_sources: list[str],
+        domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+        workflow_input: WorkflowInput | None = None,
     ) -> PromptPayload:
         """Build a final synthesis prompt from explicit research steps."""
+        workflow_input = workflow_input or WorkflowInput()
         finding_blocks: list[str] = []
         for index, (subquestion, answer, sources, warnings) in enumerate(step_findings, start=1):
             finding_blocks.append(
@@ -104,23 +136,33 @@ class PromptService:
 
         citation_block = "\n".join(citation_sources) if citation_sources else "No evidence sources were retrieved."
         return PromptPayload(
-            system_prompt=_build_system_prompt(answer_mode),
+            system_prompt=_build_system_prompt(
+                answer_mode,
+                domain_profile=domain_profile,
+                collaboration_workflow=CollaborationWorkflow.RESEARCH_SESSION,
+            ),
             user_prompt=(
                 f"Research goal: {goal}\n"
+                f"Domain profile: {domain_profile.value}\n"
                 f"Answer mode: {answer_mode.value}\n"
                 f"Retrieval mode: {retrieval_mode.value}\n\n"
+                "Structured workflow context:\n"
+                f"{_format_workflow_input(workflow_input)}\n\n"
                 "You are synthesizing the final answer from explicit research steps. "
                 "Keep local notes, saved answers, and web evidence distinct.\n\n"
                 "Available source labels:\n"
                 f"{citation_block}\n\n"
                 "Research findings:\n"
                 f"{chr(10).join(finding_blocks)}\n\n"
+                f"{_workflow_instructions(CollaborationWorkflow.RESEARCH_SESSION)}\n"
                 f"{_mode_instructions(answer_mode)}\n"
                 "Write a final synthesized answer that cites supported claims and labels broader synthesis with [Inference] when needed."
             ),
             answer_mode=answer_mode,
             citation_labels=tuple(_extract_citation_label(source) for source in citation_sources),
             evidence_types_used=(),
+            domain_profile=domain_profile,
+            collaboration_workflow=CollaborationWorkflow.RESEARCH_SESSION,
         )
 
 
@@ -203,26 +245,45 @@ def _extract_citation_label(source: str) -> str:
     return source
 
 
-def _build_system_prompt(answer_mode: AnswerMode) -> str:
+def _build_system_prompt(
+    answer_mode: AnswerMode,
+    *,
+    domain_profile: DomainProfile,
+    collaboration_workflow: CollaborationWorkflow,
+) -> str:
     common = (
         "You are a careful research assistant for an Obsidian vault. "
         "Keep local-note evidence and external web evidence distinct. "
         "Use citation labels exactly as provided when referencing evidence."
     )
+    domain_block = (
+        " Default domain: electronic music production and collaboration. "
+        "Work comfortably with genre and style fit, BPM and groove, arrangement sections, "
+        "tension and release, layering, drum programming, bass design, transitions, "
+        "references, mood, energy, atmosphere, and production workflow. "
+        "If the user asks something outside music, answer normally without forcing the music frame."
+    )
+    workflow_block = f" Active collaboration workflow: {collaboration_workflow.value}."
     if answer_mode == AnswerMode.STRICT:
         return (
             common
+            + domain_block
+            + workflow_block
             + " Strict mode: use only retrieved evidence, refuse when evidence is insufficient, "
             "and do not present unsupported claims as facts."
         )
     if answer_mode == AnswerMode.EXPLORATORY:
         return (
             common
+            + domain_block
+            + workflow_block
             + " Exploratory mode: you may synthesize and infer beyond direct evidence, but label "
             "those parts with [Inference] and keep supported claims cited."
         )
     return (
         common
+        + domain_block
+        + workflow_block
         + " Balanced mode: prioritize retrieved evidence, allow limited synthesis, and label any "
         "beyond-evidence reasoning with [Inference]."
     )
@@ -236,6 +297,9 @@ def _build_user_prompt(
     retrieval_mode: RetrievalMode,
     answer_mode: AnswerMode,
     local_retrieval_weak: bool,
+    domain_profile: DomainProfile,
+    collaboration_workflow: CollaborationWorkflow,
+    workflow_input: WorkflowInput,
     citation_sources: list[str],
     web_query_used: str,
     web_query_strategy: str,
@@ -249,8 +313,12 @@ def _build_user_prompt(
 
     return (
         f"Answer mode: {answer_mode.value}\n"
+        f"Domain profile: {domain_profile.value}\n"
+        f"Collaboration workflow: {collaboration_workflow.value}\n"
         f"Retrieval mode: {retrieval_mode.value}\n"
         f"Local retrieval strength: {evidence_strength}\n\n"
+        "Structured workflow input:\n"
+        f"{_format_workflow_input(workflow_input)}\n\n"
         f"Web query used: {web_query_used or question}\n"
         f"Web query strategy: {web_query_strategy}\n"
         f"Web alignment note: {web_alignment_note or 'No special web alignment was applied.'}\n\n"
@@ -261,6 +329,7 @@ def _build_user_prompt(
         "External web evidence:\n"
         f"{web_context_block}\n\n"
         f"Question: {question}\n\n"
+        f"{_workflow_instructions(collaboration_workflow)}\n"
         f"{mode_instructions}\n"
     )
 
@@ -291,6 +360,59 @@ def _mode_instructions(answer_mode: AnswerMode) -> str:
         "- Cite supported claims with [Local N] or [Web N].\n"
         "- If web evidence is broader than the local topic, say that explicitly instead of blending it in."
     )
+
+
+def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str:
+    if collaboration_workflow == CollaborationWorkflow.GENRE_FIT_REVIEW:
+        return (
+            "Workflow instructions:\n"
+            "- Assess likely genre or style fit using the provided evidence first.\n"
+            "- Call out mismatches, ambiguities, and missing production cues.\n"
+            "- Suggest concrete ways to align the idea more strongly with the target style.\n"
+            "- Keep evidence-backed observations distinct from inferred genre judgments."
+        )
+    if collaboration_workflow == CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE:
+        return (
+            "Workflow instructions:\n"
+            "- Critique the track concept like a constructive electronic music collaborator.\n"
+            "- Identify what is working, what feels weak or unclear, and what should be developed next.\n"
+            "- Include arrangement, energy, and sound-design directions when they are relevant.\n"
+            "- Prefer actionable next steps over generic encouragement."
+        )
+    if collaboration_workflow == CollaborationWorkflow.ARRANGEMENT_PLANNER:
+        return (
+            "Workflow instructions:\n"
+            "- Turn the idea into a practical section-by-section arrangement plan.\n"
+            "- Cover section goals, pacing, transitions, tension and release, and variation.\n"
+            "- Make the plan readable for a producer returning to a session later."
+        )
+    if collaboration_workflow == CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM:
+        return (
+            "Workflow instructions:\n"
+            "- Focus on synth, drum, bass, texture, FX, modulation, layering, and space.\n"
+            "- Suggest practical production directions rather than abstract adjectives alone.\n"
+            "- Note mix-role implications when helpful."
+        )
+    if collaboration_workflow == CollaborationWorkflow.RESEARCH_SESSION:
+        return (
+            "Workflow instructions:\n"
+            "- This is a deeper research workflow, not a quick response.\n"
+            "- Synthesize broader evidence about style, arrangement, sound design, or references.\n"
+            "- Preserve the boundary between retrieved local notes, web evidence, and model inference."
+        )
+    return (
+        "Workflow instructions:\n"
+        "- Answer like an electronic music research and collaboration assistant.\n"
+        "- Use producer-friendly language and make suggestions actionable.\n"
+        "- Do not force structure when the user only needs a direct answer."
+    )
+
+
+def _format_workflow_input(workflow_input: WorkflowInput) -> str:
+    values = workflow_input.as_dict()
+    if not values:
+        return "No additional structured workflow input was provided."
+    return "\n".join(f"- {key.replace('_', ' ').title()}: {value}" for key, value in values.items())
 
 
 def _format_local_context(chunks: list[RetrievedChunk]) -> str:

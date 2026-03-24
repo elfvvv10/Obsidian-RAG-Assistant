@@ -9,8 +9,10 @@ import streamlit as st
 from config import AppConfig, load_config
 from services.ingestion_service import IngestionService
 from services.index_service import IndexService
+from services.music_workflow_service import MusicWorkflowService
 from services.models import (
     AnswerMode,
+    CollaborationWorkflow,
     IngestionRequest,
     IndexResponse,
     QueryRequest,
@@ -19,6 +21,7 @@ from services.models import (
     ResearchResponse,
     RetrievalMode,
     RetrievalScope,
+    WorkflowInput,
     WorkflowMode,
 )
 from services.query_service import QueryService
@@ -26,13 +29,13 @@ from services.research_service import ResearchService
 from utils import RetrievalFilters, RetrievalOptions
 
 
-st.set_page_config(page_title="Obsidian RAG Assistant", layout="wide")
+st.set_page_config(page_title="Electronic Music Research Assistant", layout="wide")
 
 
 def main() -> None:
     """Render the Streamlit app."""
-    st.title("Obsidian RAG Assistant")
-    st.caption("Local-only research assistant for your Obsidian vault.")
+    st.title("Electronic Music Research and Collaboration Assistant")
+    st.caption("Local-first collaboration for genre fit, track critique, arrangement planning, sound design, and research.")
 
     try:
         base_config = load_config()
@@ -52,7 +55,13 @@ def main() -> None:
     )
 
     with ask_tab:
-        _render_ask_tab(ui_config, services["query_service"], services["research_service"], status)
+        _render_ask_tab(
+            ui_config,
+            services["query_service"],
+            services["research_service"],
+            services["music_workflow_service"],
+            status,
+        )
 
     with ingest_tab:
         _render_ingest_tab(services["ingestion_service"])
@@ -71,6 +80,7 @@ def _get_services(config: AppConfig) -> dict[str, object]:
         "research_service": ResearchService(config),
         "index_service": IndexService(config),
         "ingestion_service": IngestionService(config),
+        "music_workflow_service": MusicWorkflowService(config),
     }
 
 
@@ -170,6 +180,7 @@ def _render_ask_tab(
     config: AppConfig,
     query_service: QueryService,
     research_service: ResearchService,
+    music_workflow_service: MusicWorkflowService,
     status: IndexResponse | None,
 ) -> None:
     if status is not None:
@@ -181,24 +192,30 @@ def _render_ask_tab(
     question_col, save_col = st.columns([3, 2])
     with question_col:
         question = st.text_area(
-            "Question",
+            "Prompt",
             value=st.session_state.get("question", ""),
-            placeholder="What do my notes say about AI agents?",
+            placeholder="Describe the track idea, style target, arrangement problem, sound design goal, or research question.",
             height=120,
         )
         st.session_state["question"] = question
         with st.container(border=True):
-            st.markdown("#### Workflow")
-            st.session_state["workflow_mode"] = st.radio(
-                "Question workflow",
-                options=[WorkflowMode.DIRECT.value, WorkflowMode.RESEARCH.value],
-                index=[WorkflowMode.DIRECT.value, WorkflowMode.RESEARCH.value].index(
-                    st.session_state["workflow_mode"]
-                ),
-                horizontal=True,
-                format_func=lambda value: "Direct Ask" if value == WorkflowMode.DIRECT.value else "Research Mode",
+            st.markdown("#### Collaboration Workflow")
+            workflow_options = [workflow.value for workflow in CollaborationWorkflow]
+            st.session_state["collaboration_workflow"] = st.selectbox(
+                "Workflow",
+                options=workflow_options,
+                index=workflow_options.index(st.session_state["collaboration_workflow"]),
+                format_func=_workflow_label,
+                help="Choose a music collaboration workflow or a deeper research session.",
             )
-            if st.session_state["workflow_mode"] == WorkflowMode.RESEARCH.value:
+            selected_workflow = CollaborationWorkflow.coerce(st.session_state["collaboration_workflow"])
+            st.session_state["workflow_mode"] = (
+                WorkflowMode.RESEARCH.value
+                if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION
+                else WorkflowMode.DIRECT.value
+            )
+            st.caption(_workflow_help_text(selected_workflow))
+            if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION:
                 st.session_state["max_subquestions"] = int(
                     st.number_input(
                         "Max research subquestions",
@@ -207,6 +224,55 @@ def _render_ask_tab(
                         value=int(st.session_state["max_subquestions"]),
                         help="Research mode decomposes your request into a small visible set of subquestions.",
                     )
+                )
+            input_col1, input_col2 = st.columns(2)
+            with input_col1:
+                st.session_state["workflow_genre"] = st.text_input(
+                    "Genre / Style",
+                    value=st.session_state["workflow_genre"],
+                    help="Examples: house, techno, melodic techno, trance, garage, breakbeat.",
+                )
+                st.session_state["workflow_references"] = st.text_input(
+                    "References",
+                    value=st.session_state["workflow_references"],
+                    help="Artists, tracks, labels, or scenes.",
+                )
+                st.session_state["workflow_arrangement_notes"] = st.text_area(
+                    "Arrangement Notes",
+                    value=st.session_state["workflow_arrangement_notes"],
+                    height=90,
+                )
+                st.session_state["workflow_sound_palette"] = st.text_area(
+                    "Sound Palette",
+                    value=st.session_state["workflow_sound_palette"],
+                    height=90,
+                )
+                st.session_state["workflow_role_of_key_elements"] = st.text_input(
+                    "Role of Key Elements",
+                    value=st.session_state["workflow_role_of_key_elements"],
+                    help="What the kick, bass, lead, textures, or vocal should do in the track.",
+                )
+            with input_col2:
+                st.session_state["workflow_bpm"] = st.text_input(
+                    "BPM / Tempo",
+                    value=st.session_state["workflow_bpm"],
+                )
+                st.session_state["workflow_mood"] = st.text_input(
+                    "Mood / Energy",
+                    value=st.session_state["workflow_mood"],
+                )
+                st.session_state["workflow_instrumentation"] = st.text_area(
+                    "Instrumentation",
+                    value=st.session_state["workflow_instrumentation"],
+                    height=90,
+                )
+                st.session_state["workflow_energy_goal"] = st.text_input(
+                    "Energy Goal",
+                    value=st.session_state["workflow_energy_goal"],
+                )
+                st.session_state["workflow_track_length"] = st.text_input(
+                    "Track Length",
+                    value=st.session_state["workflow_track_length"],
                 )
             st.markdown("#### Retrieval Scope")
             st.session_state["retrieval_scope"] = st.radio(
@@ -231,9 +297,9 @@ def _render_ask_tab(
 
     with save_col:
         st.markdown("### Save Options")
+        selected_workflow = CollaborationWorkflow.coerce(st.session_state["collaboration_workflow"])
         st.caption(
-            f"Direct answers save to `{config.draft_answers_path}`. "
-            f"Research-mode saves go to `{config.research_sessions_path}`."
+            f"This workflow saves by default to `{music_workflow_service.default_save_path(selected_workflow)}`."
         )
         st.session_state["save_title"] = st.text_input(
             "Optional note title",
@@ -260,8 +326,10 @@ def _render_ask_tab(
                     retrieval_scope=st.session_state["retrieval_scope"],
                     retrieval_mode=st.session_state["retrieval_mode"],
                     answer_mode=st.session_state["answer_mode"],
+                    collaboration_workflow=st.session_state["collaboration_workflow"],
+                    workflow_input=_current_workflow_input(),
                 )
-                if st.session_state["workflow_mode"] == WorkflowMode.RESEARCH.value:
+                if st.session_state["collaboration_workflow"] == CollaborationWorkflow.RESEARCH_SESSION.value:
                     response = research_service.research(
                         ResearchRequest(
                             goal=question.strip(),
@@ -272,6 +340,8 @@ def _render_ask_tab(
                             retrieval_scope=request.retrieval_scope,
                             retrieval_mode=request.retrieval_mode,
                             answer_mode=request.answer_mode,
+                            collaboration_workflow=st.session_state["collaboration_workflow"],
+                            workflow_input=request.workflow_input,
                             max_subquestions=st.session_state["max_subquestions"],
                         )
                     )
@@ -724,6 +794,28 @@ def _source_line_from_chunk(chunk, *, label: str) -> str:
     )
 
 
+def _workflow_label(value: str) -> str:
+    return {
+        CollaborationWorkflow.GENERAL_ASK.value: "General Ask",
+        CollaborationWorkflow.GENRE_FIT_REVIEW.value: "Genre Fit Review",
+        CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE.value: "Track Concept Critique",
+        CollaborationWorkflow.ARRANGEMENT_PLANNER.value: "Arrangement Planner",
+        CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM.value: "Sound Design Brainstorm",
+        CollaborationWorkflow.RESEARCH_SESSION.value: "Research Session",
+    }.get(value, value.replace("_", " ").title())
+
+
+def _workflow_help_text(workflow: CollaborationWorkflow) -> str:
+    return {
+        CollaborationWorkflow.GENERAL_ASK: "Quick collaboration for track ideas, references, production decisions, or note-grounded questions.",
+        CollaborationWorkflow.GENRE_FIT_REVIEW: "Assess whether an idea fits a target style and identify the strongest genre cues, mismatches, and refinements.",
+        CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE: "Pressure-test a track concept, then sharpen the arrangement, energy, and sound-design direction.",
+        CollaborationWorkflow.ARRANGEMENT_PLANNER: "Turn a rough idea into a section-by-section production plan with pacing and transition guidance.",
+        CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM: "Explore synth, drum, bass, texture, and FX directions with practical production considerations.",
+        CollaborationWorkflow.RESEARCH_SESSION: "Deeper multi-step workflow. It may break the topic into subquestions, gather broader evidence, and synthesize a final research answer.",
+    }[workflow]
+
+
 def _render_index_tab(index_service: IndexService, status: IndexResponse | None) -> None:
     st.subheader("Index Status")
     if status is None:
@@ -813,7 +905,7 @@ def _render_settings_tab(config: AppConfig, status: IndexResponse | None, status
     st.write(f"Current retrieval scope: `{st.session_state['retrieval_scope']}`")
     st.write(f"Current retrieval mode: `{st.session_state['retrieval_mode']}`")
     st.write(f"Current answer mode: `{st.session_state['answer_mode']}`")
-    st.write(f"Current workflow mode: `{st.session_state['workflow_mode']}`")
+    st.write(f"Current collaboration workflow: `{st.session_state['collaboration_workflow']}`")
 
 
 def _current_filters() -> RetrievalFilters:
@@ -832,6 +924,21 @@ def _current_options() -> RetrievalOptions:
     )
 
 
+def _current_workflow_input() -> WorkflowInput:
+    return WorkflowInput(
+        genre=st.session_state["workflow_genre"],
+        bpm=st.session_state["workflow_bpm"],
+        references=st.session_state["workflow_references"],
+        mood=st.session_state["workflow_mood"],
+        arrangement_notes=st.session_state["workflow_arrangement_notes"],
+        instrumentation=st.session_state["workflow_instrumentation"],
+        sound_palette=st.session_state["workflow_sound_palette"],
+        energy_goal=st.session_state["workflow_energy_goal"],
+        track_length=st.session_state["workflow_track_length"],
+        role_of_key_elements=st.session_state["workflow_role_of_key_elements"],
+    )
+
+
 def _init_session_state(config: AppConfig) -> None:
     defaults = {
         "question": "",
@@ -847,6 +954,17 @@ def _init_session_state(config: AppConfig) -> None:
         "retrieval_mode": RetrievalMode.LOCAL_ONLY.value,
         "answer_mode": AnswerMode.BALANCED.value,
         "workflow_mode": WorkflowMode.DIRECT.value,
+        "collaboration_workflow": CollaborationWorkflow.GENERAL_ASK.value,
+        "workflow_genre": "",
+        "workflow_bpm": "",
+        "workflow_references": "",
+        "workflow_mood": "",
+        "workflow_arrangement_notes": "",
+        "workflow_instrumentation": "",
+        "workflow_sound_palette": "",
+        "workflow_energy_goal": "",
+        "workflow_track_length": "",
+        "workflow_role_of_key_elements": "",
         "max_subquestions": 3,
         "debug_mode": False,
         "last_query_response": None,

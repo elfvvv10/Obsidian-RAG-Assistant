@@ -8,8 +8,11 @@ from llm import OllamaChatClient
 from retriever import Retriever
 from saver import save_answer
 from services.common import ensure_index_compatible
+from services.music_workflow_service import MusicWorkflowService
 from services.models import (
     AnswerMode,
+    CollaborationWorkflow,
+    DomainProfile,
     QueryDebugInfo,
     QueryRequest,
     QueryResponse,
@@ -18,6 +21,7 @@ from services.models import (
     RetrievalScope,
     WebSearchAttemptInfo,
     WebQueryStrategy,
+    WorkflowInput,
 )
 from services.prompt_service import PromptService, answer_uses_inference, build_citation_sources, enforce_citation_summary
 from services.web_alignment_service import WebAlignmentResult, WebAlignmentService
@@ -55,6 +59,7 @@ class QueryService:
         self.prompt_service_cls = prompt_service_cls
         self.web_alignment_service_cls = web_alignment_service_cls
         self.capture_debug_trace = capture_debug_trace
+        self.music_workflow_service = MusicWorkflowService(config)
         self._last_web_alignment: WebAlignmentResult | None = None
         self._last_web_attempts: list[WebSearchAttemptInfo] = []
 
@@ -69,6 +74,7 @@ class QueryService:
         web_search_service = self.web_search_service_cls(self.config)
         prompt_service = self.prompt_service_cls()
         web_alignment_service = self.web_alignment_service_cls()
+        workflow_plan = self.music_workflow_service.build_query_plan(request)
         self._last_web_alignment = None
         self._last_web_attempts = []
 
@@ -90,7 +96,7 @@ class QueryService:
                 web_alignment_service=web_alignment_service,
             )
             answer_result = _build_answer_result(
-                request.question,
+                workflow_plan.prompt_text,
                 final_chunks,
                 chat_client,
                 prompt_service=prompt_service,
@@ -98,6 +104,9 @@ class QueryService:
                 retrieval_mode=request.retrieval_mode,
                 answer_mode=request.answer_mode,
                 local_retrieval_weak=_is_local_retrieval_weak(primary_chunks),
+                domain_profile=request.domain_profile,
+                collaboration_workflow=request.collaboration_workflow,
+                workflow_input=request.workflow_input,
                 web_alignment=self._last_web_alignment,
             )
             initial_candidates = []
@@ -116,7 +125,7 @@ class QueryService:
                 web_alignment_service=web_alignment_service,
             )
             answer_result = _build_answer_result(
-                request.question,
+                workflow_plan.prompt_text,
                 final_chunks,
                 chat_client,
                 prompt_service=prompt_service,
@@ -124,6 +133,9 @@ class QueryService:
                 retrieval_mode=request.retrieval_mode,
                 answer_mode=request.answer_mode,
                 local_retrieval_weak=_is_local_retrieval_weak(primary_chunks),
+                domain_profile=request.domain_profile,
+                collaboration_workflow=request.collaboration_workflow,
+                workflow_input=request.workflow_input,
                 web_alignment=self._last_web_alignment,
             )
             reranking_applied = retrieval_debug.reranking_applied
@@ -162,13 +174,16 @@ class QueryService:
 
         if request.auto_save or self.config.auto_save_answer:
             saved_path = save_answer(
-                self.config.draft_answers_path,
+                workflow_plan.save_path,
                 request.question,
                 answer_result,
                 title_override=request.save_title,
                 source_type="saved_answer",
                 status="draft",
                 indexed=False,
+                domain_profile=request.domain_profile.value,
+                workflow_type=request.collaboration_workflow.value,
+                workflow_input=request.workflow_input.as_dict(),
             )
             logger.info("Saved answer to %s", saved_path)
 
@@ -220,6 +235,9 @@ class QueryService:
                     )
                 ),
             ),
+            domain_profile=request.domain_profile,
+            collaboration_workflow=request.collaboration_workflow,
+            workflow_input=request.workflow_input,
         )
 
     def save(
@@ -232,13 +250,32 @@ class QueryService:
     ) -> QueryResponse:
         """Persist an existing answer result and return updated response info."""
         saved_path = save_answer(
-            self.config.draft_answers_path,
+            self.music_workflow_service.default_save_path(
+                existing_response.collaboration_workflow
+                if existing_response is not None
+                else CollaborationWorkflow.GENERAL_ASK
+            ),
             question,
             answer_result,
             title_override=title_override,
             source_type="saved_answer",
             status="draft",
             indexed=False,
+            domain_profile=(
+                existing_response.domain_profile.value
+                if existing_response is not None
+                else None
+            ),
+            workflow_type=(
+                existing_response.collaboration_workflow.value
+                if existing_response is not None
+                else None
+            ),
+            workflow_input=(
+                existing_response.workflow_input.as_dict()
+                if existing_response is not None
+                else None
+            ),
         )
         logger.info("Saved answer to %s", saved_path)
         if existing_response is not None:
@@ -252,6 +289,21 @@ class QueryService:
             saved_path=saved_path,
             web_results=[],
             debug=QueryDebugInfo(),
+            domain_profile=(
+                existing_response.domain_profile
+                if existing_response is not None
+                else DomainProfile.ELECTRONIC_MUSIC
+            ),
+            collaboration_workflow=(
+                existing_response.collaboration_workflow
+                if existing_response is not None
+                else CollaborationWorkflow.GENERAL_ASK
+            ),
+            workflow_input=(
+                existing_response.workflow_input
+                if existing_response is not None
+                else WorkflowInput()
+            ),
         )
 
     def _retrieve_chunks(self, retriever: Retriever, request: QueryRequest) -> list[RetrievedChunk]:
@@ -457,6 +509,9 @@ def _build_answer_result(
     retrieval_mode: RetrievalMode = RetrievalMode.LOCAL_ONLY,
     answer_mode: AnswerMode = AnswerMode.BALANCED,
     local_retrieval_weak: bool = False,
+    domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+    collaboration_workflow=CollaborationWorkflow.GENERAL_ASK,
+    workflow_input: WorkflowInput | None = None,
     web_alignment: WebAlignmentResult | None = None,
 ) -> AnswerResult:
     web_results = web_results or []
@@ -481,6 +536,9 @@ def _build_answer_result(
         retrieval_mode=retrieval_mode,
         answer_mode=answer_mode,
         local_retrieval_weak=local_retrieval_weak,
+        domain_profile=domain_profile,
+        collaboration_workflow=collaboration_workflow,
+        workflow_input=workflow_input,
         web_query_used=web_alignment.query if web_alignment else question,
         web_query_strategy=web_alignment.strategy.value if web_alignment else "raw_question",
         web_alignment_note=web_alignment.warning if web_alignment else "",

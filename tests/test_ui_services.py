@@ -10,7 +10,7 @@ from unittest.mock import patch
 from config import AppConfig
 from retriever import Retriever
 from services.index_service import IndexService
-from services.models import QueryRequest, QueryResponse, RetrievalMode, RetrievalScope
+from services.models import CollaborationWorkflow, QueryRequest, QueryResponse, RetrievalMode, RetrievalScope
 from services.query_service import QueryService
 from utils import AnswerResult, RetrievalOptions, RetrievedChunk
 
@@ -29,9 +29,15 @@ def make_config(root: Path) -> AppConfig:
 
 class UIFacingServiceTests(unittest.TestCase):
     def test_query_request_coerces_retrieval_mode(self) -> None:
-        request = QueryRequest(question="test", retrieval_mode="hybrid", retrieval_scope="extended")
+        request = QueryRequest(
+            question="test",
+            retrieval_mode="hybrid",
+            retrieval_scope="extended",
+            collaboration_workflow="sound_design_brainstorm",
+        )
         self.assertEqual(request.retrieval_mode, RetrievalMode.HYBRID)
         self.assertEqual(request.retrieval_scope, RetrievalScope.EXTENDED)
+        self.assertEqual(request.collaboration_workflow, CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM)
 
     def test_query_service_returns_debug_trace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -111,6 +117,7 @@ class UIFacingServiceTests(unittest.TestCase):
             self.assertIsNotNone(saved.saved_path)
             self.assertEqual(saved.sources, existing.sources)
             self.assertEqual(saved.warnings, existing.warnings)
+            self.assertIn("Drafts/General Asks", str(saved.saved_path))
 
     def test_retriever_returns_public_debug_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
