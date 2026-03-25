@@ -11,6 +11,7 @@ from config import AppConfig, load_config
 from llm import list_available_chat_models
 from services.ingestion_service import IngestionService
 from services.index_service import IndexService
+from services.import_genre_service import GENERIC_IMPORT_GENRE, ImportGenreService
 from services.music_workflow_service import MusicWorkflowService
 from services.models import (
     AnswerMode,
@@ -959,6 +960,8 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
     )
 
     webpage_col, youtube_col = st.columns(2)
+    import_genre_service = ImportGenreService(ingestion_service.config)
+    available_import_genres = import_genre_service.available_genres()
 
     with webpage_col:
         st.subheader("Import a Webpage")
@@ -973,6 +976,17 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
                 "Optional note title",
                 key="ingest_title",
                 help="Override the saved note title and filename slug.",
+            )
+            st.selectbox(
+                "Genre",
+                options=available_import_genres,
+                key="ingest_genre",
+                help="Choose the genre folder for this import. Use Generic for content that is not genre-specific.",
+            )
+            st.text_input(
+                "Add new genre",
+                key="ingest_new_genre",
+                help="Optional. If filled, this overrides the dropdown and creates a new genre folder.",
             )
             st.checkbox(
                 "Index immediately after save",
@@ -992,6 +1006,7 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
                             source=url,
                             title_override=st.session_state["ingest_title"].strip() or None,
                             index_now=st.session_state["ingest_index_now"],
+                            import_genre=_selected_import_genre("ingest"),
                         )
                     )
                     st.session_state["last_ingestion_response"] = response
@@ -1014,6 +1029,17 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
                 key="youtube_title",
                 help="Override the saved note title and filename slug.",
             )
+            st.selectbox(
+                "Genre",
+                options=available_import_genres,
+                key="youtube_genre",
+                help="Choose the genre folder for this import. Use Generic for content that is not genre-specific.",
+            )
+            st.text_input(
+                "Add new genre",
+                key="youtube_new_genre",
+                help="Optional. If filled, this overrides the dropdown and creates a new genre folder.",
+            )
             st.checkbox(
                 "Index YouTube note immediately",
                 help="Run the existing incremental index after creating the note.",
@@ -1032,6 +1058,7 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
                             source=url,
                             title_override=st.session_state["youtube_title"].strip() or None,
                             index_now=st.session_state["youtube_index_now"],
+                            import_genre=_selected_import_genre("youtube"),
                         )
                     )
                     st.session_state["last_ingestion_response"] = response
@@ -1048,9 +1075,18 @@ def _render_ingest_tab(ingestion_service: IngestionService) -> None:
     st.write(f"Title: `{response.title}`")
     st.write(f"Saved path: `{response.saved_path}`")
     st.write(f"Source type: `{response.source_type}`")
+    if response.import_genre:
+        st.write(f"Genre: `{response.import_genre}`")
     st.write(f"Indexed now: `{'yes' if response.index_triggered else 'no'}`")
     for warning in response.warnings:
         st.warning(warning)
+
+
+def _selected_import_genre(prefix: str) -> str:
+    new_genre = st.session_state.get(f"{prefix}_new_genre", "").strip()
+    if new_genre:
+        return new_genre
+    return st.session_state.get(f"{prefix}_genre", GENERIC_IMPORT_GENRE)
 
 
 def _render_debug_section(response: QueryResponse, original_question: str) -> None:
@@ -1058,6 +1094,11 @@ def _render_debug_section(response: QueryResponse, original_question: str) -> No
         st.markdown("**Query Summary**")
         for label, value in debug_query_summary(original_question, response.debug.rewritten_query):
             st.write(f"{label}: `{value}`")
+        if response.debug.imported_genres_eligible:
+            st.write(
+                "Imported genres eligible for retrieval: "
+                + ", ".join(f"`{genre}`" for genre in response.debug.imported_genres_eligible)
+            )
 
         metric_cols = st.columns(4)
         metric_cols[0].metric("Initial candidates", len(response.debug.initial_candidates))
@@ -1552,9 +1593,13 @@ def _init_session_state(config: AppConfig) -> None:
         "last_question": "",
         "ingest_url": "",
         "ingest_title": "",
+        "ingest_genre": GENERIC_IMPORT_GENRE,
+        "ingest_new_genre": "",
         "ingest_index_now": config.auto_index_after_ingestion,
         "youtube_url": "",
         "youtube_title": "",
+        "youtube_genre": GENERIC_IMPORT_GENRE,
+        "youtube_new_genre": "",
         "youtube_index_now": config.auto_index_after_ingestion,
         "last_ingestion_response": None,
     }

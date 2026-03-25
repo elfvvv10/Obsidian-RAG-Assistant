@@ -309,6 +309,7 @@ class QueryDebugInfo:
     non_curated_note_chunks: int = 0
     generated_or_imported_chunks: int = 0
     active_chat_model: str = ""
+    imported_genres_eligible: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -561,6 +562,7 @@ class IngestionRequest:
     source: str
     title_override: str | None = None
     index_now: bool | None = None
+    import_genre: str | None = None
 
 
 @dataclass(slots=True)
@@ -571,5 +573,6 @@ class IngestionResponse:
     source_type: str
     saved_path: Path
     title: str
+    import_genre: str | None = None
     index_triggered: bool = False
     warnings: list[str] = field(default_factory=list)

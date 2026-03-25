@@ -179,6 +179,7 @@ def _classify_notes(notes: list[Note], config: AppConfig) -> list[Note]:
                 source_kind=classification["source_kind"],
                 content_scope=classification["content_scope"],
                 content_category=classification["content_category"],
+                import_genre=classification["import_genre"],
             )
         )
     return classified_notes
@@ -213,6 +214,7 @@ def _classify_note_metadata(
     source_type = str(frontmatter.get("source_type", "")).strip().lower()
     is_imported_source = source_type in {"webpage_import", "youtube_import"}
     is_generated_source = source_type in {"saved_answer", "research_session"}
+    import_genre = str(frontmatter.get("genre", "")).strip()
 
     knowledge_prefix = _relative_prefix(config.curated_knowledge_path, config)
     generated_prefixes = {
@@ -258,6 +260,7 @@ def _classify_note_metadata(
         "source_kind": inferred_source_kind,
         "content_scope": content_scope,
         "content_category": content_category,
+        "import_genre": import_genre,
     }
 
 

@@ -52,6 +52,7 @@ class VectorStore:
                     "source_type": chunk.source_type,
                     "content_scope": chunk.content_scope,
                     "content_category": chunk.content_category,
+                    "import_genre": chunk.import_genre,
                     "tags_serialized": _serialize_tags(chunk.tags),
                     "linked_note_keys_serialized": _serialize_values(chunk.linked_note_keys),
                 }

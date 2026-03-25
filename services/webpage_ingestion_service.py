@@ -9,6 +9,7 @@ import re
 import requests
 
 from config import AppConfig
+from services.import_genre_service import ImportGenreService
 from services.ingestion_helpers import (
     build_ingested_markdown_note,
     fallback_title_from_url,
@@ -23,6 +24,7 @@ class WebpageIngestionService:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.import_genre_service = ImportGenreService(config)
 
     def ingest(self, request: IngestionRequest) -> IngestionResponse:
         """Import a webpage URL into the configured vault folder."""
@@ -36,7 +38,11 @@ class WebpageIngestionService:
         if not title:
             title = fallback_title_from_url(url, default_host="webpage")
 
-        output_dir = self.config.webpage_ingestion_path
+        import_genre = self.import_genre_service.canonicalize(request.import_genre)
+        output_dir = self.import_genre_service.destination_for(
+            self.config.webpage_ingestion_path,
+            import_genre,
+        )
         ensure_directory(output_dir)
         destination = make_ingestion_destination(output_dir, title)
 
@@ -48,6 +54,8 @@ class WebpageIngestionService:
             content=extracted["content"],
             status="imported",
             indexed=False,
+            extra_frontmatter={"genre": import_genre},
+            extra_metadata_lines=[("Genre", import_genre)],
         )
         destination.write_text(body, encoding="utf-8")
 
@@ -56,6 +64,7 @@ class WebpageIngestionService:
             source_type="webpage",
             saved_path=destination,
             title=title,
+            import_genre=import_genre,
             warnings=extracted["warnings"],
         )
 

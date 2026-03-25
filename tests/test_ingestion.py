@@ -56,13 +56,14 @@ class WebpageIngestionTests(unittest.TestCase):
 
             with patch("services.webpage_ingestion_service.requests.get", return_value=StubResponse()):
                 response = WebpageIngestionService(config).ingest(
-                    IngestionRequest(source="https://example.com/article")
+                    IngestionRequest(source="https://example.com/article", import_genre="progressive house")
                 )
 
             self.assertEqual(response.source_type, "webpage")
             self.assertEqual(response.title, "Test Article")
             self.assertTrue(response.saved_path.exists())
-            self.assertIn(config.webpage_ingestion_folder, str(response.saved_path))
+            self.assertIn(str(config.webpage_ingestion_path / "Progressive House"), str(response.saved_path))
+            self.assertEqual(response.import_genre, "Progressive House")
 
             content = response.saved_path.read_text(encoding="utf-8")
             self.assertIn('source_type: "webpage_import"', content)
@@ -71,6 +72,8 @@ class WebpageIngestionTests(unittest.TestCase):
             self.assertIn('created_by: "obsidian_rag_assistant"', content)
             self.assertIn('created_at: "', content)
             self.assertIn('source_url: "https://example.com/article"', content)
+            self.assertIn('genre: "Progressive House"', content)
+            self.assertIn("**Genre:** Progressive House", content)
             self.assertIn("## Extracted Content", content)
             self.assertIn("This is the main content.", content)
             self.assertIn("# Test Article", content)
@@ -90,6 +93,28 @@ class WebpageIngestionTests(unittest.TestCase):
                     WebpageIngestionService(config).ingest(
                         IngestionRequest(source="https://example.com/article")
                     )
+
+    def test_webpage_ingestion_defaults_to_generic_genre(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config = make_config(root)
+            config.obsidian_vault_path.mkdir()
+            config.obsidian_output_path.mkdir()
+
+            class StubResponse:
+                headers = {"content-type": "text/html; charset=utf-8"}
+                text = "<html><head><title>Generic Article</title></head><body><p>Body</p></body></html>"
+
+                def raise_for_status(self) -> None:
+                    return None
+
+            with patch("services.webpage_ingestion_service.requests.get", return_value=StubResponse()):
+                response = WebpageIngestionService(config).ingest(
+                    IngestionRequest(source="https://example.com/article")
+                )
+
+            self.assertIn(str(config.webpage_ingestion_path / "Generic"), str(response.saved_path))
+            self.assertEqual(response.import_genre, "Generic")
 
     def test_webpage_ingestion_uses_title_override_and_collision_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -174,13 +199,17 @@ class WebpageIngestionTests(unittest.TestCase):
                 return_value="First transcript line.\n\nSecond transcript line.",
             ):
                 response = YouTubeIngestionService(config).ingest(
-                    IngestionRequest(source="https://www.youtube.com/watch?v=abc123xyz00")
+                    IngestionRequest(
+                        source="https://www.youtube.com/watch?v=abc123xyz00",
+                        import_genre="New Groove",
+                    )
                 )
 
             self.assertEqual(response.source_type, "youtube")
             self.assertEqual(response.title, "Test Video")
             self.assertTrue(response.saved_path.exists())
-            self.assertIn(config.youtube_ingestion_folder, str(response.saved_path))
+            self.assertIn(str(config.youtube_ingestion_path / "New Groove"), str(response.saved_path))
+            self.assertEqual(response.import_genre, "New Groove")
 
             content = response.saved_path.read_text(encoding="utf-8")
             self.assertIn('source_type: "youtube_import"', content)
@@ -188,6 +217,8 @@ class WebpageIngestionTests(unittest.TestCase):
             self.assertIn("indexed: false", content)
             self.assertIn('created_by: "obsidian_rag_assistant"', content)
             self.assertIn('youtube_video_id: "abc123xyz00"', content)
+            self.assertIn('genre: "New Groove"', content)
+            self.assertIn("**Genre:** New Groove", content)
             self.assertIn("## Transcript", content)
             self.assertIn("First transcript line.", content)
             self.assertIn("# Test Video", content)

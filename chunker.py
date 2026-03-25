@@ -35,6 +35,10 @@ def chunk_notes(
                 "|".join(note.tags),
                 "|".join(note.linked_note_keys),
                 note.source_kind,
+                note.source_type,
+                note.content_scope,
+                note.content_category,
+                note.import_genre,
             ]
         )
         note_fingerprint = compute_note_fingerprint(note_path, fingerprint_seed)
@@ -62,6 +66,7 @@ def chunk_notes(
                     source_type=note.source_type,
                     content_scope=note.content_scope,
                     content_category=note.content_category,
+                    import_genre=note.import_genre,
                 )
             )
 

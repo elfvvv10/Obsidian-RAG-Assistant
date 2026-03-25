@@ -79,6 +79,7 @@ class Note:
     source_type: str = "note"
     content_scope: str = "extended"
     content_category: str = "non_curated_note"
+    import_genre: str = ""
 
 
 @dataclass(slots=True)
@@ -100,6 +101,7 @@ class Chunk:
     source_type: str = "note"
     content_scope: str = "extended"
     content_category: str = "non_curated_note"
+    import_genre: str = ""
 
 
 @dataclass(slots=True)

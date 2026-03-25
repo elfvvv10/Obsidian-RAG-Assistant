@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from config import AppConfig
+from services.import_genre_service import ImportGenreService
 from services.ingestion_helpers import build_ingested_markdown_note, make_ingestion_destination
 from services.models import IngestionRequest, IngestionResponse
 
@@ -22,6 +23,7 @@ class YouTubeIngestionService:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.import_genre_service = ImportGenreService(config)
 
     def ingest(self, request: IngestionRequest) -> IngestionResponse:
         """Import a YouTube URL into the configured vault folder."""
@@ -38,7 +40,11 @@ class YouTubeIngestionService:
             raise RuntimeError("Transcript retrieval returned no usable content for this YouTube video.")
 
         title = request.title_override.strip() if request.title_override else self._fetch_title(url, video_id)
-        output_dir = self.config.youtube_ingestion_path
+        import_genre = self.import_genre_service.canonicalize(request.import_genre)
+        output_dir = self.import_genre_service.destination_for(
+            self.config.youtube_ingestion_path,
+            import_genre,
+        )
         destination = make_ingestion_destination(output_dir, title)
         body = build_ingested_markdown_note(
             title=title,
@@ -48,8 +54,8 @@ class YouTubeIngestionService:
             content=transcript,
             status="imported",
             indexed=False,
-            extra_frontmatter={"youtube_video_id": video_id},
-            extra_metadata_lines=[("Video ID", video_id)],
+            extra_frontmatter={"youtube_video_id": video_id, "genre": import_genre},
+            extra_metadata_lines=[("Video ID", video_id), ("Genre", import_genre)],
         )
         destination.write_text(body, encoding="utf-8")
 
@@ -58,6 +64,7 @@ class YouTubeIngestionService:
             source_type="youtube",
             saved_path=destination,
             title=title,
+            import_genre=import_genre,
         )
 
     def _fetch_title(self, url: str, video_id: str) -> str:

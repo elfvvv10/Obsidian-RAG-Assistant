@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
 from llm import OllamaChatClient
-from retriever import Retriever
+from retriever import Retriever, RetrievalDebugResult
 from saver import save_answer
 from services.common import ensure_index_compatible
+from services.import_genre_service import ImportGenreService
 from services.music_workflow_service import MusicWorkflowService
 from services.models import (
     AnswerMode,
@@ -66,6 +69,7 @@ class QueryService:
         self.web_alignment_service_cls = web_alignment_service_cls
         self.capture_debug_trace = capture_debug_trace
         self.music_workflow_service = MusicWorkflowService(config)
+        self.import_genre_service = ImportGenreService(config)
         self.track_context_service = TrackContextService(config)
         self.track_query_rewrite_service = TrackQueryRewriteService()
         self.track_context_suggestion_service = TrackContextSuggestionService()
@@ -91,6 +95,7 @@ class QueryService:
         track_context = request.track_context
         if track_context is None and request.use_track_context and request.track_id:
             track_context = self.track_context_service.load_or_create(request.track_id)
+        eligible_import_genres = self.import_genre_service.eligible_genres(track_context)
         rewritten_query = self.track_query_rewrite_service.rewrite(request.question, track_context)
         self._last_web_alignment = None
         self._last_web_attempts = []
@@ -98,13 +103,19 @@ class QueryService:
         logger.info("Retrieving relevant notes")
         if not self.capture_debug_trace:
             try:
-                final_chunks = self._retrieve_chunks(retriever, request, rewritten_query)
+                primary_chunks = self._retrieve_chunks(
+                    retriever,
+                    request,
+                    rewritten_query,
+                    eligible_import_genres=eligible_import_genres,
+                )
+                final_chunks = primary_chunks
             except RuntimeError as exc:
                 if request.retrieval_mode == RetrievalMode.LOCAL_ONLY:
                     raise
+                primary_chunks = []
                 final_chunks = []
                 logger.info("Local retrieval unavailable; continuing with optional web fallback: %s", exc)
-            primary_chunks = [chunk for chunk in final_chunks if not chunk.metadata.get("linked_context")]
             web_results, web_warnings = self._run_web_search_if_needed(
                 rewritten_query,
                 primary_chunks=primary_chunks,
@@ -133,7 +144,12 @@ class QueryService:
             reranking_applied = bool(request.options.rerank or request.options.boost_tags)
             reranking_changed = False
         else:
-            retrieval_debug = self._retrieve_chunks_with_debug(retriever, request, rewritten_query)
+            retrieval_debug = self._retrieve_chunks_with_debug(
+                retriever,
+                request,
+                rewritten_query,
+                eligible_import_genres=eligible_import_genres,
+            )
             initial_candidates = retrieval_debug.initial_candidates
             primary_chunks = retrieval_debug.primary_chunks
             final_chunks = retrieval_debug.final_chunks
@@ -255,6 +271,7 @@ class QueryService:
                 non_curated_note_chunks=trust_counts["non_curated_note"],
                 generated_or_imported_chunks=trust_counts["generated_or_imported"],
                 active_chat_model=getattr(chat_client, "model", self.config.ollama_chat_model),
+                imported_genres_eligible=eligible_import_genres,
                 hallucination_guard_warnings=tuple(
                     _build_guard_warnings(
                         answer_result=answer_result,
@@ -358,9 +375,11 @@ class QueryService:
         retriever: Retriever,
         request: QueryRequest,
         retrieval_query: str,
+        *,
+        eligible_import_genres: tuple[str, ...],
     ) -> list[RetrievedChunk]:
         try:
-            return retriever.retrieve(
+            chunks = retriever.retrieve(
                 retrieval_query,
                 filters=request.filters,
                 options=request.options,
@@ -369,33 +388,62 @@ class QueryService:
         except TypeError as exc:
             if "retrieval_scope" not in str(exc):
                 raise
-            return retriever.retrieve(
+            chunks = retriever.retrieve(
                 retrieval_query,
                 filters=request.filters,
                 options=request.options,
             )
+        return _filter_chunks_for_import_genres(
+            chunks,
+            eligible_import_genres=eligible_import_genres,
+            import_genre_service=self.import_genre_service,
+        )
 
     def _retrieve_chunks_with_debug(
         self,
         retriever: Retriever,
         request: QueryRequest,
         retrieval_query: str,
+        *,
+        eligible_import_genres: tuple[str, ...],
     ):
+        if not hasattr(retriever, "retrieve_with_debug"):
+            final_chunks = self._retrieve_chunks(
+                retriever,
+                request,
+                retrieval_query,
+                eligible_import_genres=eligible_import_genres,
+            )
+            return RetrievalDebugResult(
+                initial_candidates=list(final_chunks),
+                reranked_candidates=list(final_chunks),
+                primary_chunks=list(final_chunks),
+                final_chunks=final_chunks,
+                reranking_applied=bool(request.options.rerank or request.options.boost_tags),
+                reranking_changed=False,
+            )
+        options = _options_with_extra_candidates(request.options)
         try:
-            return retriever.retrieve_with_debug(
+            result = retriever.retrieve_with_debug(
                 retrieval_query,
                 filters=request.filters,
-                options=request.options,
+                options=options,
                 retrieval_scope=request.retrieval_scope,
             )
         except TypeError as exc:
             if "retrieval_scope" not in str(exc):
                 raise
-            return retriever.retrieve_with_debug(
+            result = retriever.retrieve_with_debug(
                 retrieval_query,
                 filters=request.filters,
-                options=request.options,
+                options=options,
             )
+        return _filter_debug_result_for_import_genres(
+            result,
+            eligible_import_genres=eligible_import_genres,
+            import_genre_service=self.import_genre_service,
+            top_k=(request.options.top_k if request.options.top_k is not None else self.config.top_k_results),
+        )
 
     def _run_web_search_if_needed(
         self,
@@ -768,3 +816,86 @@ def _count_trust_categories(chunks: list[RetrievedChunk]) -> dict[str, int]:
         if category in counts:
             counts[category] += 1
     return counts
+
+
+def _options_with_extra_candidates(options) -> object:
+    if options is None:
+        return None
+    base_top_k = options.top_k or 3
+    expanded_candidate_count = max(
+        options.candidate_count or 0,
+        base_top_k * 4,
+    )
+    return replace(options, candidate_count=expanded_candidate_count)
+
+
+def _filter_debug_result_for_import_genres(
+    result: RetrievalDebugResult,
+    *,
+    eligible_import_genres: tuple[str, ...],
+    import_genre_service: ImportGenreService,
+    top_k: int,
+) -> RetrievalDebugResult:
+    initial_candidates = _filter_chunks_for_import_genres(
+        result.initial_candidates,
+        eligible_import_genres=eligible_import_genres,
+        import_genre_service=import_genre_service,
+    )
+    reranked_candidates = _filter_chunks_for_import_genres(
+        result.reranked_candidates,
+        eligible_import_genres=eligible_import_genres,
+        import_genre_service=import_genre_service,
+    )
+    primary_chunks = reranked_candidates[:top_k]
+    filtered_final = _filter_chunks_for_import_genres(
+        result.final_chunks,
+        eligible_import_genres=eligible_import_genres,
+        import_genre_service=import_genre_service,
+    )
+    primary_signatures = {_chunk_signature(chunk) for chunk in primary_chunks}
+    linked_chunks = [
+        chunk
+        for chunk in filtered_final
+        if chunk.metadata.get("linked_context") and _chunk_signature(chunk) not in primary_signatures
+    ]
+    return RetrievalDebugResult(
+        initial_candidates=initial_candidates,
+        reranked_candidates=reranked_candidates,
+        primary_chunks=primary_chunks,
+        final_chunks=primary_chunks + linked_chunks,
+        reranking_applied=result.reranking_applied,
+        reranking_changed=_chunk_signatures(initial_candidates) != _chunk_signatures(reranked_candidates),
+    )
+
+
+def _filter_chunks_for_import_genres(
+    chunks: list[RetrievedChunk],
+    *,
+    eligible_import_genres: tuple[str, ...],
+    import_genre_service: ImportGenreService,
+) -> list[RetrievedChunk]:
+    filtered: list[RetrievedChunk] = []
+    for chunk in chunks:
+        if str(chunk.metadata.get("content_category", "")).strip().lower() != "imported_knowledge":
+            filtered.append(chunk)
+            continue
+        import_genre = str(chunk.metadata.get("import_genre", "")).strip()
+        if not import_genre:
+            # Legacy flat imports have no genre metadata yet; keep them retrievable.
+            filtered.append(chunk)
+            continue
+        if import_genre_service.matches(import_genre, eligible_import_genres):
+            filtered.append(chunk)
+    return filtered
+
+
+def _chunk_signature(chunk: RetrievedChunk) -> tuple[object, object, object]:
+    return (
+        chunk.metadata.get("source_path"),
+        chunk.metadata.get("chunk_index"),
+        chunk.metadata.get("note_title"),
+    )
+
+
+def _chunk_signatures(chunks: list[RetrievedChunk]) -> list[tuple[object, object, object]]:
+    return [_chunk_signature(chunk) for chunk in chunks]
