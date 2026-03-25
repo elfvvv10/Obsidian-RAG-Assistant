@@ -86,3 +86,63 @@ class TrackSelectorServiceTests(unittest.TestCase):
             selected_track_index("Projects/Zulu Track/track_context.md", tracks),
             2,
         )
+
+    def test_load_workflow_context_maps_legacy_markdown_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vault_path = Path(tmp_dir) / "vault"
+            track_path = vault_path / "Projects" / "Current Tracks" / "Moonlit Driver"
+            track_path.mkdir(parents=True)
+            (track_path / "track_context.md").write_text(
+                """---
+type: track_context
+primary_genre: progressive house
+secondary_influences:
+  - deep tech
+  - tech house
+bpm: 124
+vibe:
+  - driving
+  - emotional
+reference_artists:
+  - Guy J
+current_issues:
+  - weak drop impact
+priority_focus:
+  - improve transitions
+status: arranging first full draft
+---
+
+## Structure
+
+- Intro
+- Main Section
+
+## Core Ideas
+
+- Main hook: filtered melodic arp
+- Bass: rolling
+
+## Recent Decisions
+
+- Shortened intro by 8 bars
+""",
+                encoding="utf-8",
+            )
+
+            mapped = self.service.load_workflow_context(
+                vault_path,
+                "Projects/Current Tracks/Moonlit Driver/track_context.md",
+            )
+
+            self.assertEqual(mapped["workflow_genre"], "progressive house")
+            self.assertEqual(mapped["workflow_bpm"], "124")
+            self.assertEqual(mapped["workflow_mood"], "driving, emotional")
+            self.assertIn("Guy J", mapped["workflow_references"])
+            self.assertIn("deep tech", mapped["workflow_references"])
+            self.assertIn("Status:", mapped["workflow_arrangement_notes"])
+            self.assertIn("Structure:", mapped["workflow_arrangement_notes"])
+            self.assertIn("Current Issues:", mapped["workflow_arrangement_notes"])
+            self.assertIn("Recent Decisions:", mapped["workflow_arrangement_notes"])
+            self.assertIn("Main hook: filtered melodic arp", mapped["workflow_instrumentation"])
+            self.assertIn("Vibe:", mapped["workflow_sound_palette"])
+            self.assertIn("Influences:", mapped["workflow_sound_palette"])

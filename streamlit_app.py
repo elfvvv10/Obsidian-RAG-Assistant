@@ -31,7 +31,11 @@ from services.models import (
 )
 from services.query_service import QueryService
 from services.research_service import ResearchService
-from services.track_selector_service import TrackSelectorService, selected_track_index, selected_track_path
+from services.track_selector_service import (
+    TrackSelectorService,
+    selected_track_index,
+    selected_track_path,
+)
 from services.ui_session_helpers import current_track_summary, debug_query_summary, suggestion_groups
 from utils import RetrievalFilters, RetrievalOptions, current_timestamp
 
@@ -325,6 +329,7 @@ def _render_ask_tab(
             "workflow_role_of_key_elements",
             "workflow_track_context_path",
             "workflow_track_selector",
+            "workflow_track_selector_applied_path",
             "track_context_track_id",
             "track_context_track_name",
             "track_context_genre",
@@ -376,113 +381,112 @@ def _render_ask_tab(
     with control_col:
         st.markdown("### Workspace Controls")
         st.caption("Workflow, context, reset, and tasks stay close by without interrupting the conversation flow.")
-        with st.form("ask_workspace_controls", clear_on_submit=False, enter_to_submit=False):
-            workflow_options = [workflow.value for workflow in CollaborationWorkflow]
-            selected_workflow_value = st.selectbox(
-                "Workflow",
-                options=workflow_options,
-                format_func=_workflow_label,
-                help="Choose a music collaboration workflow or a deeper research session.",
-                key="collaboration_workflow",
+        workflow_options = [workflow.value for workflow in CollaborationWorkflow]
+        selected_workflow_value = st.selectbox(
+            "Workflow",
+            options=workflow_options,
+            format_func=_workflow_label,
+            help="Choose a music collaboration workflow or a deeper research session.",
+            key="collaboration_workflow",
+        )
+        selected_workflow = CollaborationWorkflow.coerce(selected_workflow_value)
+        st.session_state["workflow_mode"] = (
+            WorkflowMode.RESEARCH.value
+            if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION
+            else WorkflowMode.DIRECT.value
+        )
+        st.caption(_workflow_help_text(selected_workflow))
+        if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION:
+            st.number_input(
+                "Max research subquestions",
+                min_value=1,
+                max_value=5,
+                help="Research mode decomposes your request into a small visible set of subquestions.",
+                key="max_subquestions",
             )
-            selected_workflow = CollaborationWorkflow.coerce(selected_workflow_value)
-            st.session_state["workflow_mode"] = (
-                WorkflowMode.RESEARCH.value
-                if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION
-                else WorkflowMode.DIRECT.value
-            )
-            st.caption(_workflow_help_text(selected_workflow))
-            if selected_workflow == CollaborationWorkflow.RESEARCH_SESSION:
-                st.number_input(
-                    "Max research subquestions",
-                    min_value=1,
-                    max_value=5,
-                    help="Research mode decomposes your request into a small visible set of subquestions.",
-                    key="max_subquestions",
-                )
 
-            with st.expander("Workflow Context", expanded=selected_workflow != CollaborationWorkflow.RESEARCH_SESSION):
-                st.caption("Legacy Markdown Track Context Path")
-                st.caption("Optional legacy path-based context. This is separate from the YAML Track Context controls in the sidebar.")
-                legacy_tracks = TrackSelectorService().list_tracks(config.obsidian_vault_path)
-                track_options = ["None"] + [track["name"] for track in legacy_tracks]
-                selected_track = st.selectbox(
-                    "Select Track (from vault)",
-                    options=track_options,
-                    index=selected_track_index(
-                        st.session_state.get("workflow_track_context_path", ""),
-                        legacy_tracks,
-                    ),
-                    key="workflow_track_selector",
-                    help="Choose any project folder under Projects/ that contains track_context.md to fill the legacy markdown Track Context Path.",
-                )
-                _apply_legacy_track_selection(selected_track, legacy_tracks)
-                st.text_input(
-                    "Track Context Path",
-                    key="workflow_track_context_path",
-                    help="Vault-relative project folder or track_context.md path, for example Projects/Current Tracks/Moonlit Driver or Projects/Current Tracks/Moonlit Driver/track_context.md.",
-                )
-                st.text_input(
-                    "Genre / Style",
-                    key="workflow_genre",
-                    help="Examples: house, techno, melodic techno, trance, garage, breakbeat.",
-                )
-                st.text_input(
-                    "References",
-                    key="workflow_references",
-                    help="Artists, tracks, labels, or scenes.",
-                )
-                st.text_input("BPM / Tempo", key="workflow_bpm")
-                st.text_input("Mood / Energy", key="workflow_mood")
-                st.text_input("Energy Goal", key="workflow_energy_goal")
-                st.text_input("Track Length", key="workflow_track_length")
-                st.text_input(
-                    "Role of Key Elements",
-                    key="workflow_role_of_key_elements",
-                    help="What the kick, bass, lead, textures, or vocal should do in the track.",
-                )
-                st.text_area("Arrangement Notes", key="workflow_arrangement_notes", height=80)
-                st.text_area("Instrumentation", key="workflow_instrumentation", height=80)
-                st.text_area("Sound Palette", key="workflow_sound_palette", height=80)
-
-            st.markdown("#### Retrieval Scope")
-            st.radio(
-                "Local retrieval scope",
-                options=[RetrievalScope.KNOWLEDGE.value, RetrievalScope.EXTENDED.value],
-                format_func=lambda value: (
-                    "Knowledge — curated notes + imported reference material"
-                    if value == RetrievalScope.KNOWLEDGE.value
-                    else "Extended — knowledge + working notes + generated drafts"
+        with st.expander("Workflow Context", expanded=selected_workflow != CollaborationWorkflow.RESEARCH_SESSION):
+            st.caption("Legacy Markdown Track Context Path")
+            st.caption("Optional legacy path-based context. This is separate from the YAML Track Context controls in the sidebar.")
+            legacy_tracks = TrackSelectorService().list_tracks(config.obsidian_vault_path)
+            track_options = ["None"] + [track["name"] for track in legacy_tracks]
+            selected_track = st.selectbox(
+                "Select Track (from vault)",
+                options=track_options,
+                index=selected_track_index(
+                    st.session_state.get("workflow_track_context_path", ""),
+                    legacy_tracks,
                 ),
-                key="retrieval_scope",
+                key="workflow_track_selector",
+                help="Choose any project folder under Projects/ that contains track_context.md to fill the legacy markdown Track Context Path.",
+            )
+            _apply_legacy_track_selection(config, selected_track, legacy_tracks)
+            st.text_input(
+                "Track Context Path",
+                key="workflow_track_context_path",
+                help="Vault-relative project folder or track_context.md path, for example Projects/Current Tracks/Moonlit Driver or Projects/Current Tracks/Moonlit Driver/track_context.md.",
             )
             st.text_input(
-                "Optional note title",
-                key="save_title",
-                help="Override the saved note title and filename slug.",
+                "Genre / Style",
+                key="workflow_genre",
+                help="Examples: house, techno, melodic techno, trance, garage, breakbeat.",
             )
-            if available_chat_models:
-                current_model = _resolve_preferred_chat_model_name(
-                    st.session_state.get("active_chat_model", _DEFAULT_ACTIVE_CHAT_MODEL),
-                    available_chat_models,
-                )
-                model_options = _dedupe_chat_model_options(available_chat_models)
-                if current_model not in model_options:
-                    model_options.insert(0, current_model)
-                st.selectbox(
-                    "Active Chat Model",
-                    options=model_options,
-                    index=model_options.index(current_model),
-                    key="active_chat_model_select",
-                    help="Session-level chat model override for comparing local Ollama models.",
-                )
-            else:
-                st.text_input(
-                    "Active Chat Model",
-                    key="active_chat_model_input",
-                    help="Session-level chat model override when live model discovery is unavailable.",
-                )
-            workspace_updated = st.form_submit_button("Update Workspace", use_container_width=True)
+            st.text_input(
+                "References",
+                key="workflow_references",
+                help="Artists, tracks, labels, or scenes.",
+            )
+            st.text_input("BPM / Tempo", key="workflow_bpm")
+            st.text_input("Mood / Energy", key="workflow_mood")
+            st.text_input("Energy Goal", key="workflow_energy_goal")
+            st.text_input("Track Length", key="workflow_track_length")
+            st.text_input(
+                "Role of Key Elements",
+                key="workflow_role_of_key_elements",
+                help="What the kick, bass, lead, textures, or vocal should do in the track.",
+            )
+            st.text_area("Arrangement Notes", key="workflow_arrangement_notes", height=80)
+            st.text_area("Instrumentation", key="workflow_instrumentation", height=80)
+            st.text_area("Sound Palette", key="workflow_sound_palette", height=80)
+
+        st.markdown("#### Retrieval Scope")
+        st.radio(
+            "Local retrieval scope",
+            options=[RetrievalScope.KNOWLEDGE.value, RetrievalScope.EXTENDED.value],
+            format_func=lambda value: (
+                "Knowledge — curated notes + imported reference material"
+                if value == RetrievalScope.KNOWLEDGE.value
+                else "Extended — knowledge + working notes + generated drafts"
+            ),
+            key="retrieval_scope",
+        )
+        st.text_input(
+            "Optional note title",
+            key="save_title",
+            help="Override the saved note title and filename slug.",
+        )
+        if available_chat_models:
+            current_model = _resolve_preferred_chat_model_name(
+                st.session_state.get("active_chat_model", _DEFAULT_ACTIVE_CHAT_MODEL),
+                available_chat_models,
+            )
+            model_options = _dedupe_chat_model_options(available_chat_models)
+            if current_model not in model_options:
+                model_options.insert(0, current_model)
+            st.selectbox(
+                "Active Chat Model",
+                options=model_options,
+                index=model_options.index(current_model),
+                key="active_chat_model_select",
+                help="Session-level chat model override for comparing local Ollama models.",
+            )
+        else:
+            st.text_input(
+                "Active Chat Model",
+                key="active_chat_model_input",
+                help="Session-level chat model override when live model discovery is unavailable.",
+            )
+        workspace_updated = st.button("Update Workspace", use_container_width=True)
 
         if workspace_updated:
             selected_chat_model = (
@@ -1375,15 +1379,31 @@ def _current_workflow_input() -> WorkflowInput:
     )
 
 
-def _apply_legacy_track_selection(selected_track: str, tracks: list[dict[str, str]]) -> None:
+def _apply_legacy_track_selection(
+    config: AppConfig,
+    selected_track: str,
+    tracks: list[dict[str, str]],
+) -> None:
     current_path = st.session_state.get("workflow_track_context_path", "").strip()
     resolved_path = selected_track_path(selected_track, tracks)
     if resolved_path is None:
         if current_path in {track["path"] for track in tracks}:
             st.session_state["workflow_track_context_path"] = ""
+        st.session_state["workflow_track_selector_applied_path"] = ""
         return
     if current_path != resolved_path:
         st.session_state["workflow_track_context_path"] = resolved_path
+
+    if st.session_state.get("workflow_track_selector_applied_path", "") == resolved_path:
+        return
+
+    autofill_values = TrackSelectorService().load_workflow_context(
+        config.obsidian_vault_path,
+        resolved_path,
+    )
+    for key, value in autofill_values.items():
+        st.session_state[key] = value
+    st.session_state["workflow_track_selector_applied_path"] = resolved_path
 
 
 def _split_csv(value: str) -> list[str]:
@@ -1569,6 +1589,7 @@ def _init_session_state(config: AppConfig) -> None:
         "workflow_role_of_key_elements": "",
         "workflow_track_context_path": "",
         "workflow_track_selector": "None",
+        "workflow_track_selector_applied_path": "",
         "track_context_track_id": "",
         "use_track_context": True,
         "track_context_track_name": "",
