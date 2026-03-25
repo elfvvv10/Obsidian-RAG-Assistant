@@ -502,7 +502,7 @@ def _render_ask_tab(
             )
         else:
             st.caption(
-                "Extended searches Knowledge, plus indexed working notes, Drafts, and Research Sessions."
+                "Extended searches Knowledge, plus indexed working notes and Saved Outputs."
             )
         if available_chat_models:
             st.caption(f"Current session model: `{st.session_state['active_chat_model']}`")
@@ -1284,7 +1284,7 @@ def _render_settings_tab(config: AppConfig, status: IndexResponse | None, status
         st.write(f"Index compatible: `{'yes' if status.index_compatible else 'no'}`")
         st.write(f"App ready: `{'yes' if status.ready else 'no'}`")
         st.caption(
-            "By default, indexing excludes draft answers, research sessions, webpage imports, and YouTube imports. "
+            "By default, indexing excludes saved outputs, saved research outputs, webpage imports, and YouTube imports. "
             "Those folders can be enabled explicitly in config if you want them indexed."
         )
 

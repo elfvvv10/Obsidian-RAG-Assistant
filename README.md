@@ -2,7 +2,55 @@
 
 A local-first Python Obsidian RAG assistant for electronic music research and collaboration. It runs through a CLI or a lightweight local Streamlit UI, uses Ollama for inference and ChromaDB for vector search, and can optionally pull in external web evidence when enabled.
 
+## Quick Start
+
+If you want the shortest path to a working local setup:
+
+1. Install Python 3.11+ and [Ollama](https://ollama.com/).
+2. Pull models:
+
+```bash
+ollama pull hermes3
+ollama pull nomic-embed-text
+```
+
+3. Clone the repo and install dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+4. Copy the sample environment:
+
+```bash
+cp .env.example .env
+```
+
+5. Build the local index:
+
+```bash
+python main.py index
+```
+
+6. Ask your first question:
+
+```bash
+python main.py ask "How can I improve this bassline groove?"
+```
+
+7. Or start the UI:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The included `sample_vault/` gives you a ready-made local vault structure for testing.
+
 ## Features
+
+At a high level, the project gives you:
 
 - Reads Markdown notes from an Obsidian vault
 - Chunks note content into retrieval-friendly Markdown-aware or sentence-aware segments
@@ -19,6 +67,11 @@ A local-first Python Obsidian RAG assistant for electronic music research and co
 - Supports a visible research mode that decomposes a goal into explicit subquestions
 - Adds an always-on electronic music collaboration persona and vocabulary layer
 - Supports music collaboration workflows such as genre-fit review, track concept critique, arrangement planning, sound design brainstorming, and research sessions
+- Supports persistent YAML Track Context for track-aware prompting, retrieval rewriting, critique mode, and assistant-suggested context updates
+- Preserves legacy markdown `track_context.md` support for older project workflows
+- Rewrites retrieval queries internally from Track Context when available while keeping the displayed user question unchanged
+- Supports structured critique mode when Track Context `workflow_mode` is `track_critique`
+- Lets the assistant suggest Track Context updates for manual review and apply
 - Labels local sources, web sources, and inference more explicitly
 - Supports retrieval scopes so you can search only curated knowledge or a broader extended set of notes
 - Shows source note references in the terminal
@@ -26,10 +79,10 @@ A local-first Python Obsidian RAG assistant for electronic music research and co
 - Supports optional external web search as a separate evidence path
 - Supports webpage ingestion as a separate content-import workflow
 - Supports YouTube transcript ingestion as a separate content-import workflow
-- Separates draft/generated content from curated knowledge by folder and metadata
+- Separates generated/imported content from curated knowledge by folder and metadata
 - Optionally saves answers back into the vault as Markdown notes
 - Uses incremental indexing to update only changed notes
-- Excludes draft answers, research sessions, and imported content from indexing by default
+- Excludes saved outputs, saved research outputs, and imported content from indexing by default
 - Can optionally index saved answers as secondary retrieval sources with distinct `[Saved N]` labels
 - Keeps generated/imported content visually distinct from curated knowledge and ordinary non-curated notes
 - Includes mocked tests, local smoke tests, and phase-focused module tests
@@ -90,7 +143,13 @@ Core modules:
 - `services/webpage_ingestion_service.py`: webpage fetch, text extraction, and note creation
 - `services/youtube_ingestion_service.py`: YouTube transcript retrieval and note creation
 - `services/prompt_service.py`: answer-mode prompt policies, music workflow guidance, citation labels, and inference guidance
-- `services/music_workflow_service.py`: workflow routing, prompt context shaping, and workflow-specific draft/research save destinations
+- `services/framework_service.py`: workflow framework document lookup and injection
+- `services/music_workflow_service.py`: workflow routing, prompt context shaping, and workflow-specific saved-output destinations
+- `services/track_context_service.py`: YAML persistence plus legacy markdown Track Context loading
+- `services/track_query_rewrite_service.py`: retrieval-only query rewriting from Track Context
+- `services/track_context_suggestion_service.py`: conservative assistant-suggested Track Context updates
+- `services/track_selector_service.py`: legacy markdown track selector discovery from `Projects/`
+- `services/ui_session_helpers.py`: UI formatting helpers for session summaries and debug output
 - `streamlit_app.py`: lightweight local UI
 - `vault_loader.py`: Markdown vault scanning
 - `chunker.py`: configurable Markdown-aware and sentence-aware chunk creation
@@ -110,9 +169,10 @@ Core modules:
 
 - Python 3.11+
 - [Ollama](https://ollama.com/)
-- Local Ollama models:
-  - `hermes3`
-  - `nomic-embed-text`
+- A local Ollama chat model and embedding model
+- Sample defaults:
+  - `OLLAMA_CHAT_MODEL=hermes3`
+  - `OLLAMA_EMBEDDING_MODEL=nomic-embed-text`
 
 ## Installation
 
@@ -132,12 +192,22 @@ Follow the official instructions for your platform:
 
 - macOS / Linux / Windows: [https://ollama.com/download](https://ollama.com/download)
 
-### 2. Pull the required models
+### 2. Pull the models you want to use
+
+Minimum:
 
 ```bash
 ollama pull hermes3
 ollama pull nomic-embed-text
 ```
+
+Optional:
+
+```bash
+ollama pull deepseek-r1
+```
+
+The Streamlit UI has a session-level active chat model selector and currently defaults that session selector to `deepseek` when available. The backend config default remains whatever you set in `OLLAMA_CHAT_MODEL`.
 
 ### 3. Verify Ollama is running
 
@@ -151,6 +221,8 @@ You should get a JSON response listing installed models.
 
 ## Environment Setup
 
+If you just want a working local test environment, the sample `.env` values and `sample_vault/` are the easiest place to start.
+
 Copy the example environment file:
 
 ```bash
@@ -161,7 +233,7 @@ Example `.env`:
 
 ```env
 OBSIDIAN_VAULT_PATH=./sample_vault
-OBSIDIAN_OUTPUT_PATH=./sample_vault/Drafts
+OBSIDIAN_OUTPUT_PATH=./sample_vault/Saved Outputs
 CHROMA_DB_PATH=./chroma_db
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_CHAT_MODEL=hermes3
@@ -178,7 +250,7 @@ MAX_LINKED_NOTES=2
 LINKED_NOTE_CHUNKS_PER_NOTE=1
 AUTO_SAVE_ANSWER=false
 INDEX_SAVED_ANSWERS=false
-RESEARCH_SESSIONS_FOLDER=Research Sessions
+RESEARCH_SESSIONS_FOLDER=Saved Outputs/research
 CURATED_KNOWLEDGE_FOLDER=Knowledge
 INDEX_RESEARCH_SESSIONS=false
 INDEX_WEBPAGE_IMPORTS=false
@@ -197,7 +269,7 @@ WEBPAGE_FETCH_USER_AGENT=obsidian-rag-assistant/1.0
 Variable notes:
 
 - `OBSIDIAN_VAULT_PATH`: path to the vault you want to index
-- `OBSIDIAN_OUTPUT_PATH`: where direct saved answers and draft answers should be written
+- `OBSIDIAN_OUTPUT_PATH`: where direct saved answers and workflow outputs should be written
 - `CHROMA_DB_PATH`: directory for local ChromaDB storage
 - `OLLAMA_BASE_URL`: Ollama HTTP API base URL
 - `OLLAMA_CHAT_MODEL`: local chat model
@@ -213,7 +285,7 @@ Variable notes:
 - `MAX_LINKED_NOTES`: maximum linked notes to expand per question
 - `LINKED_NOTE_CHUNKS_PER_NOTE`: chunks to include from each linked note
 - `AUTO_SAVE_ANSWER`: save answers automatically without prompting
-- `INDEX_SAVED_ANSWERS`: when enabled, draft answers in `OBSIDIAN_OUTPUT_PATH` can be indexed as secondary derived notes
+- `INDEX_SAVED_ANSWERS`: when enabled, saved output notes in `OBSIDIAN_OUTPUT_PATH` can be indexed as secondary derived notes
 - `RESEARCH_SESSIONS_FOLDER`: vault-relative folder for saved research workflow outputs
 - `CURATED_KNOWLEDGE_FOLDER`: preferred vault-relative home for intentionally curated notes
 - `INDEX_RESEARCH_SESSIONS`: when enabled, saved research workflow outputs are included in indexing
@@ -273,7 +345,7 @@ python main.py ask "What do my notes say about AI agents?" --top-k 2 --candidate
 python main.py ask "What happened in AI this week?" --retrieval-mode auto
 python main.py ask "Summarize local notes and web context for local models" --retrieval-mode hybrid
 python main.py ask "What do my curated notes say about AI agents?" --retrieval-scope knowledge
-python main.py ask "Search curated notes plus drafts and imports for AI agents" --retrieval-scope extended
+python main.py ask "Search curated notes plus saved outputs and imports for AI agents" --retrieval-scope extended
 python main.py ask "What do my notes say about AI agents?" --answer-mode strict
 python main.py ask "Compare my notes with recent external context" --retrieval-mode hybrid --answer-mode exploratory
 ```
@@ -299,12 +371,73 @@ The Streamlit UI supports these workflows:
 - `Sound Design Brainstorm`: explore synth, drum, bass, texture, and FX directions
 - `Research Session`: a visibly deeper multi-step workflow that can break a topic into subquestions and synthesize broader evidence
 
+When YAML Track Context `workflow_mode` is `track_critique`, responses also switch into a more structured producer-critique format:
+
+1. What is working
+2. What is not working
+3. Likely root cause
+4. High-impact changes
+5. Optional production experiments
+
 These workflows reuse the same trust model:
 
 - retrieval scope still controls which local content is eligible for search
 - retrieval mode still controls whether web evidence is allowed
 - answer mode still controls how far the model can go beyond direct evidence
-- local sources, web sources, saved drafts, and inference remain labeled separately
+- local sources, web sources, saved outputs, and inference remain labeled separately
+
+## Track Context
+
+The app now has two Track Context paths:
+
+- YAML Track Context: the primary editable flow used by the Streamlit UI
+- legacy markdown Track Context: the older `workflow_input.track_context_path` flow for `track_context.md`
+
+### YAML Track Context
+
+YAML Track Context is stored under:
+
+```text
+<OBSIDIAN_OUTPUT_PATH>/track_contexts/
+```
+
+Common fields include:
+
+- `track_id`
+- `track_name`
+- `genre`
+- `bpm`
+- `key`
+- `workflow_mode`
+- `current_stage`
+- `current_section`
+- `known_issues`
+- `goals`
+- `notes`
+
+When active in the UI, YAML Track Context can influence:
+
+- prompt context
+- retrieval-only query rewriting
+- structured critique mode
+- assistant-suggested Track Context updates
+
+The original user question is preserved. Any rewritten query is used only internally for retrieval and debug visibility.
+
+### Legacy Markdown Track Context
+
+Legacy markdown Track Context still works through a vault-relative path such as:
+
+```text
+Projects/Current Tracks/Moonlit Driver/track_context.md
+```
+
+The Streamlit UI also includes a legacy track selector that scans `Projects/` for folders containing `track_context.md` and fills the path for you.
+
+YAML and legacy markdown Track Context are intentionally kept separate. The current rule is:
+
+- YAML Track Context is used when `track_id` is set and Track Context is enabled
+- legacy markdown Track Context is used only when YAML is not active and a legacy path is provided
 
 ## Research Mode
 
@@ -344,12 +477,12 @@ It is still intentionally bounded:
 ### Retrieval Scopes
 
 - `knowledge`: curated notes plus indexed imported reference material such as ingested webpages and YouTube transcripts. This is the default and is the highest-trust local retrieval mode.
-- `extended`: everything in knowledge, plus indexed working notes, draft answers, and research sessions.
+- `extended`: everything in knowledge, plus indexed working notes, saved outputs, and saved research outputs.
 
 Retrieval scope controls which local vault content is eligible for search. Retrieval mode still controls whether web evidence is allowed.
 
-By default, `knowledge` is the safest choice because it searches your maintained Knowledge material plus imported references while still excluding draft/generated outputs and other unfinished local notes.
-`extended` is broader and more exploratory. It can be useful when you want to search working notes or draft outputs too, but it may include lower-trust or partially complete content.
+By default, `knowledge` is the safest choice because it searches your maintained Knowledge material plus imported references while still excluding saved/generated outputs and other unfinished local notes.
+`extended` is broader and more exploratory. It can be useful when you want to search working notes or saved outputs too, but it may include lower-trust or partially complete content.
 
 When web search is used, local note sources and web sources are labeled separately in both the CLI and UI.
 The default provider is now Wikipedia search because it is a more reliable no-key option than the previous DuckDuckGo-only path.
@@ -375,7 +508,7 @@ Answer mode controls how the model is allowed to write the answer. Retrieval mod
 ### Source Labels and Inference
 
 - `[Local 1]`, `[Local 2]`, and so on refer to your Obsidian notes.
-- `[Saved 1]`, `[Saved 2]`, and so on refer to draft answers or research-session notes when they have been indexed and retrieved.
+- `[Saved 1]`, `[Saved 2]`, and so on refer to saved-output notes when they have been indexed and retrieved.
 - `[Import 1]`, `[Import 2]`, and so on refer to imported external content such as webpages or YouTube transcripts when they have been indexed and retrieved.
 - `[Web 1]`, `[Web 2]`, and so on refer to external web results.
 - `[Inference]` marks model synthesis that goes beyond directly retrieved evidence.
@@ -433,13 +566,16 @@ Start the UI with:
 streamlit run streamlit_app.py
 ```
 
-The UI includes four main areas:
+The UI includes four main tabs plus the persistent sidebar:
 
 - `Sidebar`: query filters and retrieval controls such as folder, path text, tag, top-k, reranking, linked-note expansion, auto-save, retrieval mode, and answer mode
+- `Sidebar`: YAML Track Context controls plus a compact editor for core track info, session focus, and working notes
 - `Ask`: producer-facing prompt input, a workflow selector for `General Ask`, `Genre Fit Review`, `Track Concept Critique`, `Arrangement Planner`, `Sound Design Brainstorm`, and `Research Session`, plus optional music-context fields such as genre, BPM, references, mood, arrangement notes, and sound palette
+- `Ask`: a current-track summary, optional legacy markdown Track Context selector/path, and suggested Track Context updates that can be reviewed and applied manually
 - `Ask`: when web search is attempted, the UI can also show the actual web query used, whether a retry was attempted, and a brief explanation when no web sources were included
-- `Ask`: retrieved local content is separated into curated knowledge, imported knowledge, non-curated notes, generated draft sources, imported sources, and web sources where applicable
-- `Ask`: debug/status output shows the current retrieval scope and separate counts for curated knowledge, imported knowledge, non-curated notes, and generated draft content
+- `Ask`: in debug mode, the UI separates the original question from the rewritten retrieval query
+- `Ask`: retrieved local content is separated into curated knowledge, imported knowledge, non-curated notes, generated sources, imported sources, and web sources where applicable
+- `Ask`: debug/status output shows the current retrieval scope and separate counts for curated knowledge, imported knowledge, non-curated notes, and generated content
 - `Ask`: `Research Session` stays visibly distinct and shows generated subquestions, step-by-step findings, and the final synthesized answer
 - `Ingest`: paste a webpage URL or YouTube URL, save it into the vault, and optionally trigger indexing right away
 - `Index`: readiness messages plus build and rebuild actions
@@ -452,14 +588,15 @@ The UI is local-only and does not add any cloud services, authentication, or bac
 After each answer, the CLI prompts:
 
 ```text
-Save this answer to your Obsidian output folder? (y/n):
+Save this answer to your Obsidian saved outputs folder? (y/n):
 ```
 
-If you answer `y`, or if auto-save is enabled, the app creates a Markdown note in a workflow-oriented draft or research folder containing:
+If you answer `y`, or if auto-save is enabled, the app creates a Markdown note in a workflow-oriented saved-output folder containing:
 
 - The original question
 - The workflow type and domain profile
 - Any structured music-workflow input that was provided
+- YAML Track Context summary when available
 - A short summary
 - The full answer
 - Key points
@@ -474,16 +611,16 @@ Saved answer notes also include lightweight frontmatter metadata such as `source
 
 The default save destinations for this step are:
 
-- `Drafts/General Asks/`
-- `Drafts/Genre Fit Reviews/`
-- `Drafts/Track Concept Critiques/`
-- `Drafts/Arrangement Plans/`
-- `Drafts/Sound Design Brainstorms/`
-- `Research Sessions/`
+- `Saved Outputs/answers/General Asks/`
+- `Saved Outputs/critiques/Genre Fit Reviews/`
+- `Saved Outputs/critiques/Track Concept Critiques/`
+- `Saved Outputs/answers/Arrangement Plans/`
+- `Saved Outputs/answers/Sound Design Brainstorms/`
+- `Saved Outputs/research/`
 
-This keeps the draft-vs-curated boundary clean. Workflow outputs remain reviewable working material rather than being treated as curated knowledge automatically.
+This keeps generated output easy to browse without mixing it into curated track notes or evergreen production knowledge.
 
-If you want a cleaner long-term vault layout without breaking compatibility, see [VAULT_ORGANIZATION.md](VAULT_ORGANIZATION.md). The current defaults are still supported, but the repo now includes templates and a non-destructive setup helper for a clearer structure.
+If you want the recommended vault layout, see [VAULT_ORGANIZATION.md](VAULT_ORGANIZATION.md). Older `Drafts/` and `Research Sessions/` notes can still be kept or migrated gradually.
 
 ## Example Workflow
 
@@ -493,10 +630,10 @@ python main.py index
 python main.py ask "What themes recur in my product notes?"
 ```
 
-If you keep the sample settings, direct saved answers will appear under workflow-oriented draft folders inside the configured output path, and research outputs will appear in:
+If you keep the sample settings, new app-generated notes will land under:
 
 ```text
-sample_vault/Research Sessions/
+sample_vault/Saved Outputs/
 ```
 
 A recommended vault structure for electronic music production work is:
@@ -513,11 +650,6 @@ sample_vault/
 │   │       └── exports/
 │   ├── Track Ideas/
 │   └── Archived Tracks/
-├── Research/
-│   ├── genre_style/
-│   ├── production_techniques/
-│   ├── references/
-│   └── imported_material/
 ├── Knowledge/
 │   ├── Genres/
 │   ├── Arrangement/
@@ -530,20 +662,23 @@ sample_vault/
 │   └── YouTube Imports/
 ├── Saved Outputs/
 │   ├── answers/
+│   │   ├── General Asks/
+│   │   ├── Arrangement Plans/
+│   │   └── Sound Design Brainstorms/
+│   ├── critiques/
+│   │   ├── Genre Fit Reviews/
+│   │   └── Track Concept Critiques/
 │   ├── research/
-│   └── critiques/
-├── Drafts/
-│   ├── General Asks/
-│   ├── Genre Fit Reviews/
-│   ├── Track Concept Critiques/
-│   ├── Arrangement Plans/
-│   └── Sound Design Brainstorms/
-├── Research Sessions/
+│   └── README.md
 ├── Templates/
+│   ├── Frameworks/
+│   │   └── track_critique_framework_v1.md
+│   ├── track_context_template.md
+│   └── session_note_template.md
 └── Archive/
 ```
 
-Legacy folders such as `Drafts/` and `Research Sessions/` still work as before. The cleaner structure above is a recommended direction, not a forced migration.
+Legacy folders such as `Drafts/`, `Research Sessions/`, and `Research/` can still be kept temporarily if you already have notes there, but the sample vault and current defaults now point to `Saved Outputs/` and `Knowledge/`.
 
 The repo also includes a safe starter helper:
 
@@ -553,19 +688,19 @@ python scripts/setup_vault_structure.py /path/to/your/vault
 
 That script only creates missing folders and template files. It does not move or delete existing content.
 
-By default, notes in the dedicated draft, research-session, and import folders are excluded from indexing so generated or imported material does not silently become durable knowledge before you opt in.
+By default, notes in the dedicated saved-output, research-output, and import folders are excluded from indexing so generated or imported material does not silently become durable knowledge before you opt in.
 
-Curated knowledge is whatever you intentionally maintain outside those draft/import folders, with `CURATED_KNOWLEDGE_FOLDER` provided as a clear target for future promotion workflows.
+Curated knowledge is whatever you intentionally maintain outside those saved-output/import folders, with `CURATED_KNOWLEDGE_FOLDER` provided as a clear target for future promotion workflows.
 
-If you enable `INDEX_SAVED_ANSWERS=true`, those draft-answer notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
+If you enable `INDEX_SAVED_ANSWERS=true`, those saved-output notes are indexed as secondary derived sources. They are labeled separately as `[Saved N]` and are down-ranked relative to primary vault notes so they can help recall without overtaking the original notes they summarize.
 
 If you later query with `--retrieval-scope extended`, the app can search:
 
 - curated knowledge
 - indexed imported webpages and YouTube transcripts
 - normal non-curated notes elsewhere in the vault
-- saved drafts when indexed
-- research sessions when indexed
+- saved outputs when indexed
+- saved research outputs when indexed
 
 That broader scope is useful for exploratory work, but the default `knowledge` scope keeps day-to-day retrieval cleaner and more trustworthy while still allowing imported reference material when you have chosen to index it.
 
@@ -591,12 +726,20 @@ That broader scope is useful for exploratory work, but the default `knowledge` s
 ├── utils.py
 ├── services/
 │   ├── common.py
+│   ├── framework_service.py
 │   ├── ingestion_service.py
 │   ├── ingestion_helpers.py
 │   ├── index_service.py
 │   ├── models.py
+│   ├── music_workflow_service.py
 │   ├── query_service.py
 │   ├── research_service.py
+│   ├── track_context_service.py
+│   ├── track_context_suggestion_service.py
+│   ├── track_query_rewrite_service.py
+│   ├── track_selector_service.py
+│   ├── ui_session_helpers.py
+│   ├── web_alignment_service.py
 │   ├── web_search_service.py
 │   ├── webpage_ingestion_service.py
 │   └── youtube_ingestion_service.py

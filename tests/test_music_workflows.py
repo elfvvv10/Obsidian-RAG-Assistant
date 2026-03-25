@@ -30,7 +30,7 @@ def make_config(root: Path) -> AppConfig:
 
 
 class MusicWorkflowTests(unittest.TestCase):
-    def test_query_plan_uses_workflow_specific_draft_folder(self) -> None:
+    def test_query_plan_uses_workflow_specific_saved_outputs_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             (root / "vault").mkdir()
@@ -45,11 +45,11 @@ class MusicWorkflowTests(unittest.TestCase):
                 )
             )
 
-            self.assertIn("Drafts/Genre Fit Reviews", str(plan.save_path))
+            self.assertIn("critiques/Genre Fit Reviews", str(plan.save_path))
             self.assertIn("Structured workflow context:", plan.prompt_text)
             self.assertIn("genre: UK garage", plan.prompt_text)
 
-    def test_research_plan_uses_research_sessions_folder(self) -> None:
+    def test_research_plan_uses_saved_outputs_research_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             (root / "vault").mkdir()
@@ -73,7 +73,7 @@ class MusicWorkflowTests(unittest.TestCase):
             output_path.mkdir()
 
             destination = save_answer(
-                output_path / "Drafts/Arrangement Plans",
+                output_path / "answers/Arrangement Plans",
                 "Plan this progressive house arrangement",
                 result=_answer_result(),
                 source_type="saved_answer",

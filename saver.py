@@ -10,8 +10,8 @@ from utils import AnswerResult, current_timestamp, ensure_directory, slugify
 
 
 def prompt_to_save() -> bool:
-    """Prompt the user to save the answer into the output folder."""
-    response = input("\nSave this answer to your Obsidian draft answers folder? (y/n): ").strip().lower()
+    """Prompt the user to save the answer into the configured output folder."""
+    response = input("\nSave this answer to your Obsidian saved outputs folder? (y/n): ").strip().lower()
     return response in {"y", "yes"}
 
 

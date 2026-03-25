@@ -118,7 +118,7 @@ class UIFacingServiceTests(unittest.TestCase):
             self.assertIsNotNone(saved.saved_path)
             self.assertEqual(saved.sources, existing.sources)
             self.assertEqual(saved.warnings, existing.warnings)
-            self.assertIn("Drafts/General Asks", str(saved.saved_path))
+            self.assertIn("answers/General Asks", str(saved.saved_path))
 
     def test_retriever_returns_public_debug_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

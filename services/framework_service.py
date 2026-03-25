@@ -76,7 +76,13 @@ class FrameworkService:
         override_path = self._resolve_override_path(workflow)
         if override_path is not None and override_path.exists():
             return override_path, "override"
-        return (self.repo_root / "knowledge" / "frameworks" / filename).resolve(), "repo-default"
+
+        preferred_path = (self.repo_root / "templates" / "frameworks" / filename).resolve()
+        if preferred_path.exists():
+            return preferred_path, "repo-default"
+
+        legacy_path = (self.repo_root / "knowledge" / "frameworks" / filename).resolve()
+        return legacy_path, "repo-legacy-default"
 
     def _resolve_override_path(self, workflow: CollaborationWorkflow) -> Path | None:
         if workflow != CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE:

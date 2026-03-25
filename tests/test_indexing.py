@@ -223,15 +223,18 @@ class IncrementalIndexingTests(unittest.TestCase):
 
             self.assertEqual(response.notes_loaded, 2)
 
-    def test_import_and_research_folders_remain_excluded_by_default(self) -> None:
+    def test_import_and_saved_research_folders_remain_excluded_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             vault = root / "vault"
             vault.mkdir()
             (root / "output").mkdir()
             (vault / "agents.md").write_text("# Agents\n\nPrimary note", encoding="utf-8")
-            (vault / "research_sessions").mkdir()
-            (vault / "research_sessions" / "session.md").write_text("# Session\n\nGenerated research output", encoding="utf-8")
+            (vault / "Saved Outputs" / "research").mkdir(parents=True)
+            (vault / "Saved Outputs" / "research" / "session.md").write_text(
+                "# Session\n\nGenerated research output",
+                encoding="utf-8",
+            )
             (vault / "ingested_webpages").mkdir()
             (vault / "ingested_webpages" / "page.md").write_text("# Page\n\nImported webpage", encoding="utf-8")
             (vault / "ingested_youtube").mkdir()

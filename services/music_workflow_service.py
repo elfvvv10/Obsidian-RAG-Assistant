@@ -51,9 +51,9 @@ class MusicWorkflowService:
 
 def _draft_folder_name(workflow: CollaborationWorkflow) -> str:
     return {
-        CollaborationWorkflow.GENERAL_ASK: "Drafts/General Asks",
-        CollaborationWorkflow.GENRE_FIT_REVIEW: "Drafts/Genre Fit Reviews",
-        CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE: "Drafts/Track Concept Critiques",
-        CollaborationWorkflow.ARRANGEMENT_PLANNER: "Drafts/Arrangement Plans",
-        CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM: "Drafts/Sound Design Brainstorms",
-    }.get(workflow, "Drafts/General Asks")
+        CollaborationWorkflow.GENERAL_ASK: "answers/General Asks",
+        CollaborationWorkflow.GENRE_FIT_REVIEW: "critiques/Genre Fit Reviews",
+        CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE: "critiques/Track Concept Critiques",
+        CollaborationWorkflow.ARRANGEMENT_PLANNER: "answers/Arrangement Plans",
+        CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM: "answers/Sound Design Brainstorms",
+    }.get(workflow, "answers/General Asks")

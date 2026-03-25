@@ -104,8 +104,8 @@ class FrameworkInjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             repo_root = root / "repo"
-            (repo_root / "knowledge" / "frameworks").mkdir(parents=True)
-            (repo_root / "knowledge" / "frameworks" / "track_critique_framework_v1.md").write_text(
+            (repo_root / "templates" / "frameworks").mkdir(parents=True)
+            (repo_root / "templates" / "frameworks" / "track_critique_framework_v1.md").write_text(
                 "Default framework text.",
                 encoding="utf-8",
             )
@@ -125,8 +125,8 @@ class FrameworkInjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             repo_root = root / "repo"
-            (repo_root / "knowledge" / "frameworks").mkdir(parents=True)
-            (repo_root / "knowledge" / "frameworks" / "track_critique_framework_v1.md").write_text(
+            (repo_root / "templates" / "frameworks").mkdir(parents=True)
+            (repo_root / "templates" / "frameworks" / "track_critique_framework_v1.md").write_text(
                 "Default framework text.",
                 encoding="utf-8",
             )
@@ -139,11 +139,29 @@ class FrameworkInjectionTests(unittest.TestCase):
 
             self.assertEqual(framework_text, "Default framework text.")
 
+    def test_legacy_repo_framework_path_is_still_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            repo_root = root / "repo"
+            (repo_root / "knowledge" / "frameworks").mkdir(parents=True)
+            (repo_root / "knowledge" / "frameworks" / "track_critique_framework_v1.md").write_text(
+                "Legacy framework text.",
+                encoding="utf-8",
+            )
+            config = make_config(root)
+
+            framework_text = FrameworkService(config, repo_root=repo_root).get_framework_text(
+                CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                domain_profile=configured_domain(),
+            )
+
+            self.assertEqual(framework_text, "Legacy framework text.")
+
     def test_framework_text_is_cached_by_resolved_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             repo_root = root / "repo"
-            framework_dir = repo_root / "knowledge" / "frameworks"
+            framework_dir = repo_root / "templates" / "frameworks"
             framework_dir.mkdir(parents=True)
             framework_path = framework_dir / "track_critique_framework_v1.md"
             framework_path.write_text("Cached framework text.", encoding="utf-8")

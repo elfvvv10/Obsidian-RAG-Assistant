@@ -33,7 +33,7 @@ class AppConfig:
     linked_note_chunks_per_note: int = 1
     auto_save_answer: bool = False
     index_saved_answers: bool = False
-    research_sessions_folder: str = "research_sessions"
+    research_sessions_folder: str = "Saved Outputs/research"
     curated_knowledge_folder: str = "knowledge"
     index_research_sessions: bool = False
     index_webpage_imports: bool = False
@@ -54,7 +54,7 @@ class AppConfig:
 
     @property
     def draft_answers_path(self) -> Path:
-        """Return the path used for direct saved answers."""
+        """Return the root path used for saved answer outputs."""
         return self.obsidian_output_path
 
     @property
@@ -108,8 +108,11 @@ def load_config() -> AppConfig:
     linked_note_chunks_per_note = _required_int_env("LINKED_NOTE_CHUNKS_PER_NOTE", default=1, minimum=1)
     auto_save_answer = _bool_env("AUTO_SAVE_ANSWER", default=False)
     index_saved_answers = _bool_env("INDEX_SAVED_ANSWERS", default=False)
-    research_sessions_folder = _relative_folder_env("RESEARCH_SESSIONS_FOLDER", default="research_sessions")
-    curated_knowledge_folder = _relative_folder_env("CURATED_KNOWLEDGE_FOLDER", default="knowledge")
+    research_sessions_folder = _relative_folder_env(
+        "RESEARCH_SESSIONS_FOLDER",
+        default="Saved Outputs/research",
+    )
+    curated_knowledge_folder = _relative_folder_env("CURATED_KNOWLEDGE_FOLDER", default="Knowledge")
     index_research_sessions = _bool_env("INDEX_RESEARCH_SESSIONS", default=False)
     index_webpage_imports = _bool_env("INDEX_WEBPAGE_IMPORTS", default=False)
     index_youtube_imports = _bool_env("INDEX_YOUTUBE_IMPORTS", default=False)
