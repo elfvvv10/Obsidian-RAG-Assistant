@@ -5,22 +5,47 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from services.models import CollaborationWorkflow, DomainProfile, RetrievalScoreDebug, TrackContext
+from services.models import CollaborationWorkflow, DomainProfile, RetrievalScoreDebug, SessionTask, TrackContext
 from utils import RetrievedChunk
 
 
 _WEIGHTS = {
     "semantic_similarity": 3.0,
-    "lexical_overlap": 2.25,
-    "title_context_overlap": 1.5,
+    "lexical_overlap": 1.6,
+    "title_context_overlap": 1.2,
     "genre_match": 1.8,
     "domain_match": 0.75,
     "importance": 1.0,
-    "track_context_relevance": 2.0,
+    "track_context_relevance": 2.35,
+    "current_problem_match": 1.1,
+    "section_focus_match": 1.25,
+    "task_relevance": 0.75,
     "workflow_relevance": 0.8,
 }
 
 _ELECTRONIC_MUSIC_TYPES = {"track_arrangement", "youtube_video", "webpage_import"}
+_TASK_OVERLAP_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "the",
+    "to",
+    "of",
+    "in",
+    "on",
+    "for",
+    "with",
+    "by",
+    "from",
+    "at",
+    "into",
+    "up",
+    "my",
+    "your",
+    "this",
+    "that",
+}
+_MIN_MEANINGFUL_TASK_OVERLAP = 1
 
 _IMPORTANCE_BY_CATEGORY = {
     "curated_knowledge": 1.0,
@@ -77,6 +102,7 @@ def rerank_chunks(
     collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
     section_focus: str | None = None,
     domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+    current_tasks: list[SessionTask] | None = None,
 ) -> tuple[list[RetrievedChunk], list[RetrievalScoreDebug]]:
     """Rerank retrieved chunks with explicit weighted scoring."""
     if not chunks:
@@ -99,6 +125,7 @@ def rerank_chunks(
             collaboration_workflow=collaboration_workflow,
             section_focus=section_focus or "",
             domain_profile=domain_profile,
+            current_tasks=current_tasks or [],
         )
         title_text = str(chunk.metadata.get("note_title", ""))
         normalized_title = " ".join(_tokenize(title_text))
@@ -106,11 +133,11 @@ def rerank_chunks(
 
         exact_title_match_boost = 0.0
         if normalized_query and normalized_title and normalized_query in normalized_title:
-            exact_title_match_boost = 1.5 if len(query_terms) > 1 else 0.5
+            exact_title_match_boost = 0.75 if len(query_terms) > 1 else 0.2
 
         title_token_overlap_boost = 0.0
         if query_terms and title_terms:
-            title_token_overlap_boost = (len(query_terms & title_terms) / len(query_terms)) * 0.75
+            title_token_overlap_boost = (len(query_terms & title_terms) / len(query_terms)) * 0.35
 
         candidate.component_scores["title_exact_match"] = exact_title_match_boost
         candidate.component_scores["title_token_overlap_boost"] = title_token_overlap_boost
@@ -152,6 +179,7 @@ def _score_candidate(
     collaboration_workflow: CollaborationWorkflow,
     section_focus: str,
     domain_profile: DomainProfile,
+    current_tasks: list[SessionTask],
 ) -> _CandidateScore:
     chunk_terms = set(_tokenize(chunk.text))
     title_terms = set(_title_terms(chunk))
@@ -166,6 +194,9 @@ def _score_candidate(
     domain_match = _domain_match_score(domain_profile, chunk)
     importance = _importance_score(chunk)
     track_context_relevance = _track_context_relevance_score(track_context_terms, searchable_terms, chunk, section_focus)
+    current_problem_match = _current_problem_match_score(track_context, searchable_terms)
+    section_focus_match = _section_focus_match_score(section_focus, chunk)
+    task_relevance = _task_relevance_score(current_tasks, searchable_terms, chunk)
     workflow_relevance = _workflow_relevance_score(collaboration_workflow, chunk)
     tag_boost = len(normalized_boost_tags & set(_metadata_tags(chunk))) * tag_boost_weight
 
@@ -177,6 +208,9 @@ def _score_candidate(
         "domain_match": domain_match * _WEIGHTS["domain_match"],
         "importance": importance * _WEIGHTS["importance"],
         "track_context_relevance": track_context_relevance * _WEIGHTS["track_context_relevance"],
+        "current_problem_match": current_problem_match * _WEIGHTS["current_problem_match"],
+        "section_focus_match": section_focus_match * _WEIGHTS["section_focus_match"],
+        "task_relevance": task_relevance * _WEIGHTS["task_relevance"],
         "workflow_relevance": workflow_relevance * _WEIGHTS["workflow_relevance"],
         "tag_boost": tag_boost,
     }
@@ -333,6 +367,81 @@ def _track_context_relevance_score(
         if focus_terms and focus_terms & section_terms:
             score += 0.35
     return min(score, 1.0)
+
+
+def _current_problem_match_score(
+    track_context: TrackContext | None,
+    searchable_terms: set[str],
+) -> float:
+    if track_context is None or not track_context.current_problem:
+        return 0.0
+    problem_terms = set(_tokenize(track_context.current_problem))
+    if not problem_terms:
+        return 0.0
+    return min(_overlap_ratio(problem_terms, searchable_terms), 1.0)
+
+
+def _section_focus_match_score(section_focus: str, chunk: RetrievedChunk) -> float:
+    normalized_focus = section_focus.strip().lower()
+    if not normalized_focus:
+        return 0.0
+    focus_terms = set(_tokenize(normalized_focus))
+    if not focus_terms:
+        return 0.0
+    section_name_terms = set(_tokenize(str(chunk.metadata.get("arrangement_section_name", ""))))
+    video_section_terms = set(_tokenize(str(chunk.metadata.get("video_section_title", ""))))
+    heading_terms = set(_tokenize(str(chunk.metadata.get("heading_context", ""))))
+    if focus_terms and focus_terms <= section_name_terms:
+        return 1.0
+    if focus_terms and focus_terms <= video_section_terms:
+        return 0.4
+    if focus_terms & section_name_terms:
+        return 0.75
+    if focus_terms & video_section_terms:
+        return 0.3
+    if focus_terms & heading_terms:
+        return 0.4
+    return 0.0
+
+
+def _task_relevance_score(
+    current_tasks: list[SessionTask],
+    searchable_terms: set[str],
+    chunk: RetrievedChunk,
+) -> float:
+    if not current_tasks:
+        return 0.0
+    section_terms = {
+        term
+        for term in _tokenize(
+            " ".join(
+                [
+                    str(chunk.metadata.get("arrangement_section_name", "")),
+                    str(chunk.metadata.get("video_section_title", "")),
+                    str(chunk.metadata.get("heading_context", "")),
+                ]
+            )
+        )
+    }
+    best_score = 0.0
+    for task in current_tasks:
+        if task.status.strip().lower() != "open":
+            continue
+        task_terms = {
+            term
+            for term in _tokenize(task.text)
+            if term not in _TASK_OVERLAP_STOPWORDS
+        }
+        meaningful_overlap_terms = task_terms & searchable_terms
+        if len(meaningful_overlap_terms) < _MIN_MEANINGFUL_TASK_OVERLAP:
+            continue
+        text_overlap = _overlap_ratio(task_terms, searchable_terms) if task_terms else 0.0
+        linked_section_terms = set(_tokenize(task.linked_section))
+        section_bonus = 0.0
+        if linked_section_terms and linked_section_terms & section_terms:
+            section_bonus = 0.15
+        best_score = max(best_score, min(text_overlap + section_bonus, 0.4))
+    return best_score
 
 
 def _workflow_relevance_score(

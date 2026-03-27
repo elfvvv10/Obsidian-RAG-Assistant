@@ -15,7 +15,7 @@ from utils import ensure_directory, get_logger, current_timestamp
 
 logger = get_logger()
 
-_VALID_STATUSES = {"open", "completed"}
+_VALID_STATUSES = {"open", "done", "deferred"}
 _VALID_PRIORITIES = {"low", "medium", "high"}
 
 
@@ -104,7 +104,7 @@ class TrackTaskService:
                 raw["priority"] = _normalize_priority(raw["priority"])
             if "status" in raw:
                 raw["status"] = _normalize_status(raw["status"])
-            if raw["status"] != "completed":
+            if raw["status"] != "done":
                 raw["completed_at"] = None
             raw["text"] = str(raw.get("text", "")).strip()
             raw["linked_section"] = str(raw.get("linked_section", "") or "").strip()
@@ -129,7 +129,7 @@ class TrackTaskService:
             track_id,
             task_id,
             {
-                "status": "completed" if completed else "open",
+                "status": "done" if completed else "open",
                 "completed_at": current_timestamp() if completed else None,
             },
         )
@@ -182,7 +182,7 @@ class TrackTaskService:
 def _normalize_task(raw: dict[str, object]) -> PersistedTrackTask:
     status = _normalize_status(raw.get("status"))
     completed_at = str(raw.get("completed_at", "")).strip() or None
-    if status != "completed":
+    if status != "done":
         completed_at = None
     return PersistedTrackTask(
         id=str(raw.get("id", "")).strip() or uuid4().hex,
@@ -199,6 +199,8 @@ def _normalize_task(raw: dict[str, object]) -> PersistedTrackTask:
 
 def _normalize_status(value: object) -> str:
     normalized = str(value or "open").strip().lower()
+    if normalized == "completed":
+        return "done"
     return normalized if normalized in _VALID_STATUSES else "open"
 
 

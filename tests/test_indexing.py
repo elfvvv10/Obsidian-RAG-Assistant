@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from config import AppConfig
 from services.index_service import IndexService
-from services.models import CollaborationWorkflow, DomainProfile, TrackContext
+from services.models import CollaborationWorkflow, DomainProfile, SessionTask, TrackContext
 from services.prompt_service import build_citation_sources
 from main import run_ask, run_index
 from retriever import Retriever
@@ -318,6 +318,152 @@ class IncrementalIndexingTests(unittest.TestCase):
             top_detail = debug.reranking_details[0]
             self.assertIn("workflow_relevance", top_detail.component_scores)
             self.assertIn("track_context_relevance", top_detail.component_scores)
+            self.assertIn("section_focus_match", top_detail.component_scores)
+
+    def test_retriever_prefers_current_problem_and_open_task_aligned_drop_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def count(self) -> int:
+                    return 2
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None, **kwargs) -> list[RetrievedChunk]:
+                    return [
+                        RetrievedChunk(
+                            "breakdown re-entry urgency improves when the fill accelerates density across the last four bars",
+                            {
+                                "note_title": "Breakdown Re-entry Fixes",
+                                "source_path": "breakdown.md",
+                                "chunk_index": 0,
+                                "source_type": "track_arrangement",
+                                "arrangement_section_name": "Breakdown",
+                                "arrangement_genre": "progressive house",
+                                "heading_context": "re-entry urgency",
+                                "content_category": "curated_knowledge",
+                            },
+                            0.12,
+                        ),
+                        RetrievedChunk(
+                            "if the first drop loses contrast after 8 bars, use bar 49 as a pivot and vary the bass motif",
+                            {
+                                "note_title": "Drop Pivot Note",
+                                "source_path": "drop.md",
+                                "chunk_index": 0,
+                                "source_type": "track_arrangement",
+                                "arrangement_section_name": "Drop",
+                                "arrangement_genre": "progressive house",
+                                "heading_context": "bar 49 pivot",
+                                "content_category": "curated_knowledge",
+                            },
+                            0.22,
+                        ),
+                    ]
+
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+
+            debug = retriever.retrieve_with_debug(
+                "What should I do next to get this track unstuck?",
+                options=RetrievalOptions(top_k=1, candidate_count=2, rerank=False),
+                collaboration_workflow=CollaborationWorkflow.ARRANGEMENT_PLANNER,
+                track_context=TrackContext(
+                    track_id="moonlit_driver",
+                    genre="progressive house",
+                    current_problem="first drop loses contrast after the initial 8 bars",
+                    known_issues=["breakdown re-entry feels too polite"],
+                ),
+                current_tasks=[
+                    SessionTask(
+                        id="1",
+                        text="Increase drop contrast with pre-drop subtraction",
+                        status="open",
+                        source="user",
+                        created_at="2026-03-28 10:00:00",
+                        linked_section="drop",
+                    )
+                ],
+            )
+
+            self.assertEqual(debug.primary_chunks[0].metadata["note_title"], "Drop Pivot Note")
+            top_detail = debug.reranking_details[0]
+            self.assertGreater(top_detail.component_scores["current_problem_match"], 0.0)
+            self.assertGreater(top_detail.component_scores["task_relevance"], 0.0)
+            second_detail = debug.reranking_details[1]
+            self.assertEqual(second_detail.note_title, "Breakdown Re-entry Fixes")
+            self.assertEqual(second_detail.component_scores["task_relevance"], 0.0)
+
+    def test_retriever_prefers_exact_drop_arrangement_chunk_in_close_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def count(self) -> int:
+                    return 2
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None, **kwargs) -> list[RetrievedChunk]:
+                    return [
+                        RetrievedChunk(
+                            "progressive house drop contrast improves when the motif evolves in the second half",
+                            {
+                                "note_title": "Progressive House Drop Dynamics",
+                                "source_path": "genre-note.md",
+                                "chunk_index": 0,
+                                "source_type": "youtube_video",
+                                "import_genre": "progressive house",
+                                "video_section_title": "Drop contrast",
+                                "content_category": "curated_knowledge",
+                            },
+                            0.18,
+                        ),
+                        RetrievedChunk(
+                            "moonlit driver drop blueprint: keep bars 33 to 40 stable, then create a bar 49 pivot",
+                            {
+                                "note_title": "Moonlit Driver Drop Blueprint",
+                                "source_path": "arrangement.md",
+                                "chunk_index": 0,
+                                "source_type": "track_arrangement",
+                                "arrangement_track_name": "Moonlit Driver",
+                                "arrangement_section_name": "Drop",
+                                "arrangement_genre": "progressive house",
+                                "heading_context": "drop payoff and bar 49 pivot",
+                                "content_category": "curated_knowledge",
+                            },
+                            0.22,
+                        ),
+                    ]
+
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+
+            debug = retriever.retrieve_with_debug(
+                "How can I improve the second half of the drop without making it busier?",
+                options=RetrievalOptions(top_k=1, candidate_count=2, rerank=False),
+                collaboration_workflow=CollaborationWorkflow.ARRANGEMENT_PLANNER,
+                section_focus="drop",
+                track_context=TrackContext(
+                    track_id="moonlit_driver",
+                    genre="progressive house",
+                    current_problem="first drop loses contrast after the initial 8 bars",
+                ),
+            )
+
+            self.assertEqual(debug.primary_chunks[0].metadata["note_title"], "Moonlit Driver Drop Blueprint")
+            top_detail = debug.reranking_details[0]
+            self.assertGreater(top_detail.component_scores["section_focus_match"], 0.0)
+            self.assertGreater(top_detail.component_scores["current_problem_match"], 0.0)
 
     def test_index_version_mismatch_requires_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

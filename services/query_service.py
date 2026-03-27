@@ -127,6 +127,12 @@ class QueryService:
         current_tasks = list(request.current_tasks)
         if track_context is not None and request.use_track_context:
             current_tasks = self.track_task_service.load_session_tasks(track_context.track_id)
+        retrieval_tasks = _open_tasks_only(current_tasks)
+        debug_task_summaries = (
+            tuple(f"{task.id}:{task.text}" for task in retrieval_tasks[:5])
+            if self.config.framework_debug
+            else ()
+        )
         eligible_import_genres = self.import_genre_service.eligible_genres(track_context)
         rewritten_query = self.track_query_rewrite_service.rewrite(request.question, track_context)
         self._last_web_alignment = None
@@ -141,6 +147,7 @@ class QueryService:
                     rewritten_query,
                     eligible_import_genres=eligible_import_genres,
                     track_context=track_context,
+                    current_tasks=retrieval_tasks,
                 )
                 final_chunks = primary_chunks
             except RuntimeError as exc:
@@ -186,6 +193,7 @@ class QueryService:
                 or request.options.boost_tags
                 or track_context is not None
                 or bool((request.section_focus or "").strip())
+                or bool(retrieval_tasks)
                 or request.collaboration_workflow != CollaborationWorkflow.GENERAL_ASK
             )
             reranking_changed = False
@@ -197,6 +205,7 @@ class QueryService:
                 rewritten_query,
                 eligible_import_genres=eligible_import_genres,
                 track_context=track_context,
+                current_tasks=retrieval_tasks,
             )
             initial_candidates = retrieval_debug.initial_candidates
             primary_chunks = retrieval_debug.primary_chunks
@@ -350,6 +359,9 @@ class QueryService:
                 ),
                 missing_dimension=prompt_payload.missing_dimension if prompt_payload is not None else "",
                 active_section=prompt_payload.active_section if prompt_payload is not None else "",
+                loaded_task_count=len(current_tasks),
+                open_task_count=len(retrieval_tasks),
+                active_task_summaries=debug_task_summaries,
                 hallucination_guard_warnings=tuple(
                     _build_guard_warnings(
                         answer_result=answer_result,
@@ -502,6 +514,7 @@ class QueryService:
         *,
         eligible_import_genres: tuple[str, ...],
         track_context: TrackContext | None,
+        current_tasks: list[SessionTask],
     ) -> list[RetrievedChunk]:
         try:
             chunks = retriever.retrieve(
@@ -513,6 +526,7 @@ class QueryService:
                 collaboration_workflow=request.collaboration_workflow,
                 section_focus=request.section_focus,
                 domain_profile=request.domain_profile,
+                current_tasks=current_tasks,
             )
         except TypeError as exc:
             message = str(exc)
@@ -541,6 +555,7 @@ class QueryService:
                     collaboration_workflow=request.collaboration_workflow,
                     section_focus=request.section_focus,
                     domain_profile=request.domain_profile,
+                    current_tasks=current_tasks,
                 )
             else:
                 raise
@@ -558,6 +573,7 @@ class QueryService:
         *,
         eligible_import_genres: tuple[str, ...],
         track_context: TrackContext | None,
+        current_tasks: list[SessionTask],
     ):
         if not hasattr(retriever, "retrieve_with_debug"):
             final_chunks = self._retrieve_chunks(
@@ -566,6 +582,7 @@ class QueryService:
                 retrieval_query,
                 eligible_import_genres=eligible_import_genres,
                 track_context=track_context,
+                current_tasks=current_tasks,
             )
             return RetrievalDebugResult(
                 initial_candidates=list(final_chunks),
@@ -587,6 +604,7 @@ class QueryService:
                 collaboration_workflow=request.collaboration_workflow,
                 section_focus=request.section_focus,
                 domain_profile=request.domain_profile,
+                current_tasks=current_tasks,
             )
         except TypeError as exc:
             message = str(exc)
@@ -636,6 +654,7 @@ class QueryService:
                     collaboration_workflow=request.collaboration_workflow,
                     section_focus=request.section_focus,
                     domain_profile=request.domain_profile,
+                    current_tasks=current_tasks,
                 )
             else:
                 raise
@@ -1003,6 +1022,11 @@ def _count_trust_categories(chunks: list[RetrievedChunk]) -> dict[str, int]:
         if category in counts:
             counts[category] += 1
     return counts
+
+
+def _open_tasks_only(tasks: list[SessionTask]) -> list[SessionTask]:
+    """Keep retrieval task awareness bounded to currently open track tasks."""
+    return [task for task in tasks if task.status == "open"]
 
 
 def _options_with_extra_candidates(options) -> object:

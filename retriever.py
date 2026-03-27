@@ -12,6 +12,7 @@ from services.models import (
     DomainProfile,
     RetrievalScoreDebug,
     RetrievalScope,
+    SessionTask,
     TrackContext,
 )
 from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
@@ -54,6 +55,7 @@ class Retriever:
         collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
         section_focus: str | None = None,
         domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+        current_tasks: list[SessionTask] | None = None,
     ) -> list[RetrievedChunk]:
         """Return the top-k relevant chunks for a question."""
         return self.retrieve_with_debug(
@@ -65,6 +67,7 @@ class Retriever:
             collaboration_workflow=collaboration_workflow,
             section_focus=section_focus,
             domain_profile=domain_profile,
+            current_tasks=current_tasks,
         ).final_chunks
 
     def retrieve_with_debug(
@@ -77,6 +80,7 @@ class Retriever:
         collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
         section_focus: str | None = None,
         domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
+        current_tasks: list[SessionTask] | None = None,
     ) -> RetrievalDebugResult:
         """Return retrieved chunks plus public intermediate retrieval details."""
         if self.vector_store.count() == 0:
@@ -98,6 +102,7 @@ class Retriever:
             collaboration_workflow=collaboration_workflow,
             section_focus=section_focus,
             domain_profile=domain_profile,
+            current_tasks=current_tasks,
         )
         primary_chunks = self._select_primary_chunks(ranked_chunks, settings["top_k"])
         final_chunks = self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"], retrieval_scope)
@@ -106,6 +111,7 @@ class Retriever:
             or settings["boost_tags"]
             or track_context is not None
             or bool((section_focus or "").strip())
+            or bool(current_tasks)
             or collaboration_workflow != CollaborationWorkflow.GENERAL_ASK
         )
         return RetrievalDebugResult(
@@ -198,12 +204,14 @@ class Retriever:
         collaboration_workflow: CollaborationWorkflow,
         section_focus: str | None,
         domain_profile: DomainProfile,
+        current_tasks: list[SessionTask] | None,
     ) -> tuple[list[RetrievedChunk], list[RetrievalScoreDebug]]:
         if (
             not settings["rerank_enabled"]
             and not settings["boost_tags"]
             and track_context is None
             and not (section_focus or "").strip()
+            and not current_tasks
             and collaboration_workflow == CollaborationWorkflow.GENERAL_ASK
         ):
             return chunks, []
@@ -216,6 +224,7 @@ class Retriever:
             collaboration_workflow=collaboration_workflow,
             section_focus=section_focus,
             domain_profile=domain_profile,
+            current_tasks=current_tasks,
         )
         return ranked_chunks, details
 

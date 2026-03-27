@@ -505,6 +505,9 @@ class QueryDebugInfo:
     followup_triggered: bool = False
     missing_dimension: str = ""
     active_section: str = ""
+    loaded_task_count: int = 0
+    open_task_count: int = 0
+    active_task_summaries: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)

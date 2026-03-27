@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from config import AppConfig
 from services.models import CollaborationWorkflow, QueryRequest, TrackContext
 from services.query_service import QueryService
@@ -27,6 +29,15 @@ def make_config(root: Path) -> AppConfig:
 
 
 class TrackTaskServiceTests(unittest.TestCase):
+    def test_load_tasks_returns_empty_when_task_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackTaskService(make_config(root))
+
+            self.assertEqual(service.load_tasks("moonlit_driver"), [])
+
     def test_save_and_load_tasks_by_track_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -61,10 +72,10 @@ class TrackTaskServiceTests(unittest.TestCase):
             completed = service.complete_task("moonlit_driver", created.id, completed=True)
             self.assertIsNotNone(completed)
             assert completed is not None
-            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.status, "done")
             self.assertIsNotNone(completed.completed_at)
             reloaded_after_complete = service.load_tasks("moonlit_driver")
-            self.assertEqual(reloaded_after_complete[0].status, "completed")
+            self.assertEqual(reloaded_after_complete[0].status, "done")
             self.assertEqual(reloaded_after_complete[0].completed_at, completed.completed_at)
 
             updated = service.update_task(
@@ -88,6 +99,125 @@ class TrackTaskServiceTests(unittest.TestCase):
             self.assertTrue(deleted)
             self.assertEqual(service.load_tasks("moonlit_driver"), [])
 
+    def test_deferring_task_clears_completion_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackTaskService(make_config(root))
+
+            created = service.add_task(
+                "moonlit_driver",
+                text="Try alternate break FX tail",
+                priority="medium",
+                linked_section="break",
+                notes="Keep it subtle",
+            )
+            completed = service.complete_task("moonlit_driver", created.id, completed=True)
+            assert completed is not None
+
+            deferred = service.update_task(
+                "moonlit_driver",
+                created.id,
+                {"status": "deferred"},
+            )
+
+            self.assertIsNotNone(deferred)
+            assert deferred is not None
+            self.assertEqual(deferred.status, "deferred")
+            self.assertIsNone(deferred.completed_at)
+            self.assertEqual(deferred.id, created.id)
+            self.assertEqual(deferred.text, created.text)
+            self.assertEqual(deferred.priority, created.priority)
+            self.assertEqual(deferred.linked_section, created.linked_section)
+            self.assertEqual(deferred.notes, created.notes)
+
+    def test_reopening_done_task_clears_completion_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackTaskService(make_config(root))
+
+            created = service.add_task(
+                "moonlit_driver",
+                text="Fix the first drop transition",
+                priority="high",
+                linked_section="drop",
+                notes="Focus on the snare lift into the hit",
+            )
+            completed = service.complete_task("moonlit_driver", created.id, completed=True)
+            assert completed is not None
+
+            reopened = service.complete_task("moonlit_driver", created.id, completed=False)
+
+            self.assertIsNotNone(reopened)
+            assert reopened is not None
+            self.assertEqual(reopened.status, "open")
+            self.assertIsNone(reopened.completed_at)
+            self.assertEqual(reopened.id, created.id)
+            self.assertEqual(reopened.text, created.text)
+            self.assertEqual(reopened.priority, created.priority)
+            self.assertEqual(reopened.linked_section, created.linked_section)
+            self.assertEqual(reopened.notes, created.notes)
+
+    def test_load_normalizes_legacy_completed_status_and_save_writes_canonical_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackTaskService(make_config(root))
+            task_path = service.task_path("moonlit_driver")
+            task_path.parent.mkdir(parents=True, exist_ok=True)
+            task_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "track_id": "moonlit_driver",
+                        "schema_version": "track_tasks_v1",
+                        "tasks": [
+                            {
+                                "id": "legacy-1",
+                                "text": "Legacy completed task",
+                                "status": "completed",
+                                "priority": "medium",
+                                "linked_section": "drop",
+                                "created_from": "user",
+                                "created_at": "2026-03-27T10:00:00Z",
+                                "completed_at": "2026-03-27T11:00:00Z",
+                                "notes": "",
+                            },
+                            {
+                                "id": "legacy-2",
+                                "text": "Bad status task",
+                                "status": "mystery",
+                                "priority": "medium",
+                                "linked_section": "",
+                                "created_from": "user",
+                                "created_at": "2026-03-27T10:00:00Z",
+                                "completed_at": "2026-03-27T11:00:00Z",
+                                "notes": "",
+                            },
+                        ],
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = service.load_tasks("moonlit_driver")
+
+            self.assertEqual(loaded[0].status, "done")
+            self.assertEqual(loaded[0].completed_at, "2026-03-27T11:00:00Z")
+            self.assertEqual(loaded[1].status, "open")
+            self.assertIsNone(loaded[1].completed_at)
+
+            service.save_tasks("moonlit_driver", loaded)
+            saved = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(saved["tasks"][0]["status"], "done")
+            self.assertEqual(saved["tasks"][1]["status"], "open")
+            self.assertIsNone(saved["tasks"][1]["completed_at"])
+
     def test_load_session_tasks_preserves_prompt_relevant_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -108,6 +238,56 @@ class TrackTaskServiceTests(unittest.TestCase):
             self.assertEqual(session_tasks[0].priority, "high")
             self.assertEqual(session_tasks[0].linked_section, "drop")
             self.assertEqual(session_tasks[0].notes, "Check bass syncopation")
+
+    def test_tasks_are_isolated_per_track_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackTaskService(make_config(root))
+
+            service.add_task("moonlit_driver", text="Trim intro by 8 bars")
+            service.add_task("nightglass", text="Tighten break tension")
+
+            moonlit_tasks = service.load_tasks("moonlit_driver")
+            nightglass_tasks = service.load_tasks("nightglass")
+
+            self.assertEqual([task.text for task in moonlit_tasks], ["Trim intro by 8 bars"])
+            self.assertEqual([task.text for task in nightglass_tasks], ["Tighten break tension"])
+
+    def test_task_persistence_does_not_mutate_canonical_track_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            track_context_service = TrackContextService(config)
+            task_service = TrackTaskService(config)
+            original_context = TrackContext(
+                track_id="moonlit_driver",
+                track_name="Moonlit Driver",
+                genre="progressive house",
+                current_problem="Drop loses momentum",
+            )
+            track_context_service.save_canonical_track_context(original_context)
+
+            task_service.add_task(
+                "moonlit_driver",
+                text="Increase drop contrast with pre-drop subtraction",
+                linked_section="drop",
+            )
+            task_service.complete_task(
+                "moonlit_driver",
+                task_service.load_tasks("moonlit_driver")[0].id,
+                completed=True,
+            )
+
+            reloaded_context = track_context_service.load_canonical_track_context("moonlit_driver")
+
+            self.assertEqual(reloaded_context.track_id, original_context.track_id)
+            self.assertEqual(reloaded_context.track_name, original_context.track_name)
+            self.assertEqual(reloaded_context.genre, original_context.genre)
+            self.assertEqual(reloaded_context.current_problem, original_context.current_problem)
 
 
 class QueryServiceTrackTaskTests(unittest.TestCase):
@@ -194,3 +374,112 @@ class QueryServiceTrackTaskTests(unittest.TestCase):
             self.assertIn("Shorten the intro by 8 bars", response.answer)
             self.assertIn("priority: high", response.answer)
             self.assertIn("section: intro", response.answer)
+
+    def test_query_service_passes_only_open_tasks_into_retrieval_and_reports_debug_counts(self) -> None:
+        class StubEmbeddingClient:
+            def __init__(self, config: AppConfig) -> None:
+                pass
+
+        class StubChatClient:
+            def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
+                self.model = model_override or config.ollama_chat_model
+
+            def answer_with_prompt(self, prompt_payload):
+                return prompt_payload.system_prompt
+
+        class StubRetriever:
+            last_current_tasks = None
+
+            def __init__(self, config: AppConfig, embedding_client, vector_store) -> None:
+                pass
+
+            def retrieve(self, query: str, filters=None, options=None, retrieval_scope=None, **kwargs):
+                StubRetriever.last_current_tasks = list(kwargs.get("current_tasks", []))
+                return [
+                    RetrievedChunk(
+                        text="Arrangement note",
+                        metadata={"note_title": "Arrangement", "source_path": "arrangement.md"},
+                        distance_or_score=0.1,
+                    )
+                ]
+
+        class StubVectorStore:
+            def __init__(self, config: AppConfig) -> None:
+                pass
+
+            def is_index_compatible(self) -> bool:
+                return True
+
+            def count(self) -> int:
+                return 1
+
+        class StubWebSearchService:
+            def __init__(self, config: AppConfig) -> None:
+                pass
+
+            def search(self, query: str):
+                return []
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            config.framework_debug = True
+            track_context_service = TrackContextService(config)
+            track_context_service.save_canonical_track_context(
+                TrackContext(track_id="moonlit_driver", track_name="Moonlit Driver")
+            )
+            track_task_service = TrackTaskService(config)
+            open_task = track_task_service.add_task(
+                "moonlit_driver",
+                text="Increase drop contrast with pre-drop subtraction",
+                priority="high",
+                linked_section="drop",
+            )
+            done_task = track_task_service.add_task(
+                "moonlit_driver",
+                text="Test alternate clap layer in break",
+                linked_section="break",
+            )
+            deferred_task = track_task_service.add_task(
+                "moonlit_driver",
+                text="Revisit intro riser sweep",
+                linked_section="intro",
+            )
+            track_task_service.complete_task("moonlit_driver", done_task.id, completed=True)
+            track_task_service.update_task(
+                "moonlit_driver",
+                deferred_task.id,
+                {"status": "deferred"},
+            )
+
+            service = QueryService(
+                config,
+                embedding_client_cls=StubEmbeddingClient,
+                chat_client_cls=StubChatClient,
+                retriever_cls=StubRetriever,
+                vector_store_cls=StubVectorStore,
+                web_search_service_cls=StubWebSearchService,
+                capture_debug_trace=False,
+            )
+
+            response = service.ask(
+                QueryRequest(
+                    question="What should I do next on this track?",
+                    track_id="moonlit_driver",
+                    use_track_context=True,
+                    collaboration_workflow=CollaborationWorkflow.ARRANGEMENT_PLANNER,
+                )
+            )
+
+            self.assertIsNotNone(StubRetriever.last_current_tasks)
+            retrieval_tasks = StubRetriever.last_current_tasks
+            assert retrieval_tasks is not None
+            self.assertEqual([task.id for task in retrieval_tasks], [open_task.id])
+            self.assertEqual(response.debug.loaded_task_count, 3)
+            self.assertEqual(response.debug.open_task_count, 1)
+            self.assertEqual(
+                response.debug.active_task_summaries,
+                (f"{open_task.id}:{open_task.text}",),
+            )

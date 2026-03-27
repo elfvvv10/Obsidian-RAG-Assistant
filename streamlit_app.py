@@ -1889,7 +1889,6 @@ def _render_task_actions(task: SessionTask, *, query_service: QueryService) -> N
                 task.id,
                 completed=task.status == "open",
             )
-                )
             st.session_state["session_tasks"] = query_service.track_task_service.load_session_tasks(active_track_id)
             st.session_state["session_tasks_track_id"] = active_track_id
         else:
