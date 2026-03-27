@@ -12,6 +12,7 @@ from services.models import (
     CollaborationWorkflow,
     QueryRequest,
     ResearchRequest,
+    TrackContext,
     WorkflowInput,
 )
 from services.music_workflow_service import MusicWorkflowService
@@ -49,6 +50,24 @@ class MusicWorkflowTests(unittest.TestCase):
             self.assertIn("Structured workflow context:", plan.prompt_text)
             self.assertIn("genre: UK garage", plan.prompt_text)
 
+    def test_query_plan_uses_track_specific_subfolder_when_track_context_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = MusicWorkflowService(make_config(root))
+
+            plan = service.build_query_plan(
+                QueryRequest(
+                    question="Review this garage idea",
+                    collaboration_workflow=CollaborationWorkflow.GENRE_FIT_REVIEW,
+                    track_id="warehouse-hypnosis-01",
+                    use_track_context=True,
+                )
+            )
+
+            self.assertIn("critiques/Genre Fit Reviews/warehouse-hypnosis-01", str(plan.save_path))
+
     def test_research_plan_uses_saved_outputs_research_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -65,6 +84,24 @@ class MusicWorkflowTests(unittest.TestCase):
             )
 
             self.assertEqual(plan.save_path, config.research_sessions_path)
+
+    def test_research_plan_uses_track_specific_subfolder_when_track_context_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            service = MusicWorkflowService(config)
+
+            plan = service.build_research_plan(
+                ResearchRequest(
+                    goal="Compare melodic techno arrangement conventions",
+                    track_id="warehouse-hypnosis-01",
+                    use_track_context=True,
+                )
+            )
+
+            self.assertEqual(plan.save_path, config.research_sessions_path / "warehouse-hypnosis-01")
 
     def test_save_answer_includes_workflow_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -90,6 +127,21 @@ class MusicWorkflowTests(unittest.TestCase):
             self.assertIn("## Arrangement Plan", contents)
             self.assertIn("## Production Plan Notes", contents)
             self.assertIn("Genre: progressive house", contents)
+
+    def test_save_answer_respects_track_specific_output_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            output_path = root / "output"
+            output_path.mkdir()
+
+            destination = save_answer(
+                output_path / "answers/Arrangement Plans/warehouse-hypnosis-01",
+                "Plan this progressive house arrangement",
+                result=_answer_result(),
+                track_context=TrackContext(track_id="warehouse-hypnosis-01", track_name="Warehouse Hypnosis"),
+            )
+
+            self.assertIn("answers/Arrangement Plans/warehouse-hypnosis-01", str(destination))
 
 
 def _answer_result():

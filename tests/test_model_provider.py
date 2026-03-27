@@ -9,7 +9,12 @@ from pathlib import Path
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
 from llm import OllamaChatClient, OpenAIChatClient
-from model_provider import create_chat_client, create_embedding_client, list_available_chat_models
+from model_provider import (
+    chat_provider_supports_structured_json,
+    create_chat_client,
+    create_embedding_client,
+    list_available_chat_models,
+)
 
 
 def make_config() -> AppConfig:
@@ -83,3 +88,15 @@ class ModelProviderTests(unittest.TestCase):
 
         self.assertEqual(models, ["gpt-4o-mini"])
         self.assertIsNone(error)
+
+    def test_chat_provider_supports_structured_json_for_supported_providers(self) -> None:
+        config = make_config()
+        self.assertTrue(chat_provider_supports_structured_json(config))
+
+        config.chat_provider = "openai"
+        self.assertTrue(chat_provider_supports_structured_json(config))
+
+    def test_chat_provider_supports_structured_json_honors_override(self) -> None:
+        config = make_config()
+        self.assertTrue(chat_provider_supports_structured_json(config, provider_override="openai"))
+        self.assertFalse(chat_provider_supports_structured_json(config, provider_override="custom"))

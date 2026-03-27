@@ -40,7 +40,7 @@ VIDEO_IMPORT_TEMPLATE = """---
 source_type: "youtube_video"
 status: "imported"
 indexed: false
-created_by: "obsidian_rag_assistant"
+created_by: "obsidian_track_collaborator"
 imported_at: "2026-03-25 20:15:00"
 video_title: "Full Video Title"
 source_url: "https://www.youtube.com/watch?v=example"
@@ -545,7 +545,7 @@ def parse_video_knowledge_document(frontmatter: dict[str, object] | None, body: 
         content_type=_clean_str(frontmatter.get("content_type")) or "video_knowledge",
         status=_clean_str(frontmatter.get("status")) or "imported",
         indexed=str(frontmatter.get("indexed", "")).strip().lower() == "true",
-        created_by=_clean_str(frontmatter.get("created_by")) or "obsidian_rag_assistant",
+        created_by=_clean_str(frontmatter.get("created_by")) or "obsidian_track_collaborator",
         video_id=_clean_str(frontmatter.get("video_id")),
         transcript_source=_clean_str(frontmatter.get("transcript_source")),
         whisper_model=_clean_str(frontmatter.get("whisper_model")),

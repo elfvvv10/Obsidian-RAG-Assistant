@@ -13,6 +13,7 @@ from services.models import (
     CollaborationWorkflow,
     DomainProfile,
     RetrievalMode,
+    SectionContext,
     SessionTask,
     TrackContext,
     WorkflowInput,
@@ -36,6 +37,19 @@ class PromptPayload:
     evidence_types_used: tuple[str, ...]
     domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC
     collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK
+    response_mode: str = "direct_answer"
+    missing_dimension: str = ""
+    followup_question_count: int = 0
+    active_section: str = ""
+
+
+@dataclass(slots=True)
+class ResponseModeDecision:
+    """Lightweight prompt-side decision for track-aware follow-up behavior."""
+
+    response_mode: str = "direct_answer"
+    missing_dimension: str = ""
+    followup_question_count: int = 0
 
 
 class PromptService:
@@ -69,6 +83,7 @@ class PromptService:
         track_context: TrackContext | None = None,
         recent_conversation: list[ChatMessage] | None = None,
         current_tasks: list[SessionTask] | None = None,
+        section_focus: str | None = None,
         web_query_used: str = "",
         web_query_strategy: str = "raw_question",
         web_alignment_note: str = "",
@@ -78,6 +93,29 @@ class PromptService:
         workflow_input = workflow_input or WorkflowInput()
         recent_conversation = recent_conversation or []
         current_tasks = current_tasks or []
+        practical_output_mode = _detect_practical_output_mode(question, collaboration_workflow)
+        active_section, active_section_context = _resolve_active_section(
+            question.strip().lower(),
+            track_context=track_context,
+            chunks=chunks,
+            section_focus=section_focus or "",
+        )
+        music_collaboration_turn = _is_music_collaboration_turn(
+            question.strip().lower(),
+            collaboration_workflow,
+            practical_output_mode,
+        )
+        response_mode_decision = _decide_response_mode(
+            question=question,
+            collaboration_workflow=collaboration_workflow,
+            track_context=track_context,
+            workflow_input=workflow_input,
+            chunks=chunks,
+            local_retrieval_weak=local_retrieval_weak,
+            practical_output_mode=practical_output_mode,
+            recent_conversation=recent_conversation,
+            active_section=active_section,
+        )
         framework_text = self.framework_service.get_framework_text(collaboration_workflow, domain_profile)
         track_context_text = ""
         if use_track_context and track_id and track_context is not None:
@@ -94,12 +132,36 @@ class PromptService:
             chunks,
             workflow_input,
         )
+        track_context_update_instructions = _track_context_update_instructions(
+            collaboration_workflow,
+            question=question,
+            track_context=track_context,
+            section_focus=section_focus,
+        )
         system_prompt = _build_system_prompt(
             answer_mode,
             domain_profile=domain_profile,
             collaboration_workflow=collaboration_workflow,
+            producer_collaborator_text=_producer_collaborator_block(
+                collaboration_workflow,
+                practical_output_mode=practical_output_mode,
+            ),
+            followup_behavior_text=(
+                _track_aware_followup_block(
+                    response_mode_decision,
+                    active_section=active_section,
+                )
+                if music_collaboration_turn and collaboration_workflow != CollaborationWorkflow.RESEARCH_SESSION
+                else ""
+            ),
+            section_reasoning_text=(
+                _section_reasoning_block(active_section, active_section_context)
+                if music_collaboration_turn and collaboration_workflow != CollaborationWorkflow.RESEARCH_SESSION
+                else ""
+            ),
             framework_text=framework_text,
             critique_instructions=critique_instructions,
+            track_context_update_instructions=track_context_update_instructions,
             track_context_text=track_context_text,
             recent_conversation=recent_conversation,
             current_tasks=current_tasks,
@@ -129,12 +191,17 @@ class PromptService:
                 web_query_used=web_query_used,
                 web_query_strategy=web_query_strategy,
                 web_alignment_note=web_alignment_note,
+                practical_output_mode=practical_output_mode,
             ),
             answer_mode=answer_mode,
             citation_labels=tuple(citation_labels),
             evidence_types_used=evidence_types_used,
             domain_profile=domain_profile,
             collaboration_workflow=collaboration_workflow,
+            response_mode=response_mode_decision.response_mode,
+            missing_dimension=response_mode_decision.missing_dimension,
+            followup_question_count=response_mode_decision.followup_question_count,
+            active_section=active_section,
         )
 
     def _format_track_context(self, track_context: TrackContext) -> str:
@@ -165,6 +232,21 @@ class PromptService:
             lines.append(f"- Known Issues: {', '.join(track_context.known_issues)}")
         if track_context.goals:
             lines.append(f"- Goals: {', '.join(track_context.goals)}")
+        if track_context.sections:
+            lines.append("- Sections:")
+            for section_key, section in track_context.sections.items():
+                parts = [section.name or section_key]
+                if section.role:
+                    parts.append(f"role={section.role}")
+                if section.energy_level:
+                    parts.append(f"energy={section.energy_level}")
+                if section.bars:
+                    parts.append(f"bars={section.bars}")
+                if section.elements:
+                    parts.append(f"elements={', '.join(section.elements)}")
+                if section.issues:
+                    parts.append(f"issues={', '.join(section.issues)}")
+                lines.append(f"  - {section_key}: {' | '.join(parts)}")
         return "\n".join(lines)
 
     def _format_critique_instructions(
@@ -404,14 +486,22 @@ def _build_system_prompt(
     *,
     domain_profile: DomainProfile,
     collaboration_workflow: CollaborationWorkflow,
+    producer_collaborator_text: str = "",
+    followup_behavior_text: str = "",
+    section_reasoning_text: str = "",
     framework_text: str = "",
     critique_instructions: str = "",
+    track_context_update_instructions: str = "",
     track_context_text: str = "",
     recent_conversation: list[ChatMessage] | None = None,
     current_tasks: list[SessionTask] | None = None,
 ) -> str:
     common = (
         "You are a careful research assistant for an Obsidian vault. "
+        "Keep local-note evidence and external web evidence distinct. "
+        "Use citation labels exactly as provided when referencing evidence."
+        if collaboration_workflow == CollaborationWorkflow.RESEARCH_SESSION
+        else "You are a careful, grounded collaborator for an Obsidian vault. "
         "Keep local-note evidence and external web evidence distinct. "
         "Use citation labels exactly as provided when referencing evidence."
     )
@@ -448,8 +538,16 @@ def _build_system_prompt(
             "beyond-evidence reasoning with [Inference]."
         )
 
+    if producer_collaborator_text:
+        prompt += f"\n\n{producer_collaborator_text.strip()}"
+    if followup_behavior_text:
+        prompt += f"\n\n{followup_behavior_text.strip()}"
+    if section_reasoning_text:
+        prompt += f"\n\n{section_reasoning_text.strip()}"
     if critique_instructions:
         prompt += f"\n\n{critique_instructions.strip()}"
+    if track_context_update_instructions:
+        prompt += f"\n\n{track_context_update_instructions.strip()}"
 
     chat_task_enabled = collaboration_workflow in {
         CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
@@ -485,6 +583,7 @@ def _build_user_prompt(
     web_query_used: str,
     web_query_strategy: str,
     web_alignment_note: str,
+    practical_output_mode: str | None,
 ) -> str:
     local_context_block = _format_local_context(chunks)
     web_context_block = _format_web_context(web_results)
@@ -511,6 +610,7 @@ def _build_user_prompt(
         f"{web_context_block}\n\n"
         f"Question: {question}\n\n"
         f"{_workflow_instructions(collaboration_workflow)}\n"
+        f"{_practical_output_instructions(practical_output_mode, local_retrieval_weak=local_retrieval_weak)}\n"
         f"{mode_instructions}\n"
     )
 
@@ -596,10 +696,94 @@ def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str
         )
     return (
         "Workflow instructions:\n"
-        "- Answer like an electronic music research and collaboration assistant.\n"
+        "- Answer like an electronic music producer collaborator, not a research summarizer.\n"
         "- Use producer-friendly language and make suggestions actionable.\n"
         "- Do not force structure when the user only needs a direct answer."
     )
+
+
+def _producer_collaborator_block(
+    collaboration_workflow: CollaborationWorkflow,
+    *,
+    practical_output_mode: str | None,
+) -> str:
+    if collaboration_workflow == CollaborationWorkflow.RESEARCH_SESSION:
+        return ""
+    lines = [
+        "Producer-collaborator behavior:",
+        "- Start with the answer, diagnosis, or suggestion. Do not open by summarizing sources, retrieved context, or evidence.",
+        "- Speak like a decisive electronic music producer collaborator helping the user move the track forward.",
+        "- Prioritize action over theory. Diagnose what matters, prioritize it, then suggest the next moves.",
+        "- Retrieval is support material. Use it to constrain or sharpen the answer, but do not let it define the response structure.",
+        "- Avoid generic filler, hedging, and vague encouragement.",
+        "- Favor concrete DAW-usable suggestions over conceptual commentary.",
+        "- When useful, shape the advice around track-aware cues such as genre, BPM, key, vibe, reference tracks, current section, and current problem.",
+    ]
+    if practical_output_mode:
+        lines.append(
+            "- This request asks for practical musical output. Do not defer to sources, links, or videos instead of generating usable material."
+        )
+    return "\n".join(lines)
+
+
+def _track_aware_followup_block(decision: ResponseModeDecision, *, active_section: str = "") -> str:
+    lines = [
+        "Track-aware follow-up behavior:",
+        "- Use existing Track Context, recent conversation, and arrangement context before asking anything.",
+        "- Do not ask for details that are already known from Track Context or the recent session.",
+        "- Never use generic clarification language such as 'can you provide more information?' or broad questionnaires.",
+        f"- Response mode for this turn: {decision.response_mode}.",
+    ]
+    if active_section:
+        lines.append(f"- The active section in play is: {active_section}.")
+    if decision.missing_dimension:
+        lines.append(f"- The most important missing dimension is: {decision.missing_dimension}.")
+    if decision.response_mode == "answer_plus_followup":
+        lines.extend(
+            [
+                f"- Give brief provisional diagnosis or directional advice first, then ask {max(1, decision.followup_question_count)} focused producer-style follow-up question.",
+                "- Keep the question short, musically diagnostic, and high-value.",
+                "- If the section is known, name it directly in the question, for example 'In your current breakdown...' or 'In the drop...'.",
+            ]
+        )
+    elif decision.response_mode == "followup_only":
+        question_count = max(1, min(2, decision.followup_question_count))
+        lines.extend(
+            [
+                f"- Ask {question_count} short producer-aware follow-up question{'s' if question_count > 1 else ''} only.",
+                "- Do not give a broad list of possibilities or a long intake form.",
+                "- If the section is known, phrase the question around that section instead of asking for section labels again.",
+            ]
+        )
+    else:
+        lines.append("- Answer directly and concretely. Only ask a follow-up if it materially improves the advice.")
+    return "\n".join(lines)
+
+
+def _section_reasoning_block(
+    active_section: str,
+    active_section_context: SectionContext | None,
+) -> str:
+    lines = [
+        "Section-aware reasoning:",
+        "- Reason about what the current section is supposed to do, and whether it is achieving that role.",
+        "- Prefer section-specific advice over generic track-level advice when a section is known.",
+        "- If section context is partial, make a reasonable assumption or ask one targeted follow-up rather than defaulting to generic advice.",
+    ]
+    if active_section:
+        lines.append(f"- Active section: {active_section}.")
+    if active_section_context is not None:
+        if active_section_context.role:
+            lines.append(f"- Known section role: {active_section_context.role}.")
+        if active_section_context.energy_level:
+            lines.append(f"- Known section energy: {active_section_context.energy_level}.")
+        if active_section_context.bars:
+            lines.append(f"- Known section bars: {active_section_context.bars}.")
+        if active_section_context.elements:
+            lines.append(f"- Known section elements: {', '.join(active_section_context.elements)}.")
+        if active_section_context.issues:
+            lines.append(f"- Known section issues: {', '.join(active_section_context.issues)}.")
+    return "\n".join(lines)
 
 
 def _music_collaboration_instruction_block() -> str:
@@ -613,6 +797,60 @@ def _music_collaboration_instruction_block() -> str:
         "- Treat cross-genre or adjacent-genre ideas as optional variations and label them clearly as optional.\n"
         "- If the user asks for ideas or options, provide multiple concrete, usable ideas rather than summarizing sources or staying conceptual."
     )
+
+
+def _practical_output_instructions(practical_output_mode: str | None, *, local_retrieval_weak: bool) -> str:
+    if practical_output_mode is None:
+        return ""
+
+    weak_retrieval_line = (
+        "- Retrieval is weak or limited. You may say that briefly if helpful, but you must still generate practical output."
+        if local_retrieval_weak
+        else "- Use retrieval to sharpen the output, but do not let citations replace the output itself."
+    )
+    shared_lines = [
+        "Practical output instructions:",
+        "- The user is asking for usable musical material, not just explanation.",
+        "- Generate the practical output directly instead of referring the user elsewhere.",
+        weak_retrieval_line,
+        "- Never substitute links, sources, videos, or reference summaries for actual output.",
+    ]
+    if practical_output_mode == "midi_pattern":
+        shared_lines.extend(
+            [
+                "- Provide at least 2 pattern examples.",
+                "- Each pattern must include: Bar Length, Timing / Step Grid, and Pitch.",
+                "- Pitch must use note names, scale degrees, or another directly playable equivalent.",
+                "- Timing must be specific enough to enter directly into a DAW without interpretation.",
+                "- You may add velocity, accents, octave moves, note length, or variation notes when useful.",
+                "- Do not return only theory, explanation, or source commentary.",
+            ]
+        )
+    elif practical_output_mode == "sound_design":
+        shared_lines.extend(
+            [
+                "- Include starting parameter suggestions such as oscillator choice, filter direction, envelope shape, and saturation or distortion where relevant.",
+                "- Include at least one modulation or automation idea.",
+                "- Explain the musical role of the sound in the groove, arrangement, or mix.",
+            ]
+        )
+    elif practical_output_mode == "arrangement":
+        shared_lines.extend(
+            [
+                "- Include section-level actions.",
+                "- Include rough bar-count logic where useful.",
+                "- Briefly explain the tension and release logic behind the arrangement moves.",
+            ]
+        )
+    elif practical_output_mode == "critique":
+        shared_lines.extend(
+            [
+                "- Identify the most important issue first.",
+                "- Explain why that issue matters.",
+                "- Give prioritized, concrete fixes in the order the producer should try them.",
+            ]
+        )
+    return "\n".join(shared_lines)
 
 
 def _sound_design_structured_output_block() -> str:
@@ -640,11 +878,523 @@ def _sound_design_structured_output_block() -> str:
     )
 
 
+def _detect_practical_output_mode(question: str, collaboration_workflow: CollaborationWorkflow) -> str | None:
+    normalized = question.strip().lower()
+    if collaboration_workflow == CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE:
+        return "critique"
+    if collaboration_workflow == CollaborationWorkflow.ARRANGEMENT_PLANNER:
+        return "arrangement"
+    if collaboration_workflow == CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM:
+        if any(token in normalized for token in ("midi", "pattern", "bassline", "arp", "melody", "rhythm")):
+            return "midi_pattern"
+        return "sound_design"
+    midi_pattern_markers = (
+        "midi",
+        "pattern",
+        "bassline",
+        "bass line",
+        "melodic pattern",
+        "melody idea",
+        "melody ideas",
+        "arp",
+        "arpeggio",
+        "rhythm should i try",
+        "rhythm ideas",
+        "drum pattern",
+        "note pattern",
+        "sequence",
+    )
+    if any(marker in normalized for marker in midi_pattern_markers):
+        return "midi_pattern"
+    if any(marker in normalized for marker in ("sound design", "patch", "preset", "synth sound", "automation moves")):
+        return "sound_design"
+    if any(marker in normalized for marker in ("arrange this", "arrangement", "how would you arrange", "section")):
+        return "arrangement"
+    if any(marker in normalized for marker in ("critique", "what should i change first", "feels flat", "what is weak")):
+        return "critique"
+    return None
+
+
+def _decide_response_mode(
+    *,
+    question: str,
+    collaboration_workflow: CollaborationWorkflow,
+    track_context: TrackContext | None,
+    workflow_input: WorkflowInput,
+    chunks: list[RetrievedChunk],
+    local_retrieval_weak: bool,
+    practical_output_mode: str | None,
+    recent_conversation: list[ChatMessage],
+    active_section: str,
+) -> ResponseModeDecision:
+    if collaboration_workflow == CollaborationWorkflow.RESEARCH_SESSION:
+        return ResponseModeDecision()
+
+    normalized = question.strip().lower()
+    if not _is_music_collaboration_turn(normalized, collaboration_workflow, practical_output_mode):
+        return ResponseModeDecision()
+
+    arrangement_signals = _extract_arrangement_signals(normalized, chunks, workflow_input)
+    arrangement_available = arrangement_signals["has_any"]
+    context_strength = _track_context_strength(track_context)
+    recent_context_present = bool(recent_conversation)
+    missing_dimension = _detect_missing_dimension(
+        normalized,
+        track_context=track_context,
+        workflow_input=workflow_input,
+        arrangement_signals=arrangement_signals,
+        active_section=active_section,
+    )
+
+    if practical_output_mode == "midi_pattern":
+        if context_strength >= 1 or recent_context_present or _question_contains_specific_style_hint(normalized):
+            return ResponseModeDecision()
+        if _references_current_track(normalized):
+            return ResponseModeDecision(
+                response_mode="answer_plus_followup",
+                missing_dimension=missing_dimension or "style_fit_target",
+                followup_question_count=1,
+            )
+        return ResponseModeDecision()
+
+    if not missing_dimension:
+        return ResponseModeDecision()
+
+    if _should_use_followup_only(
+        normalized,
+        missing_dimension=missing_dimension,
+        context_strength=context_strength,
+        recent_context_present=recent_context_present,
+        arrangement_available=arrangement_available,
+        local_retrieval_weak=local_retrieval_weak,
+    ):
+        return ResponseModeDecision(
+            response_mode="followup_only",
+            missing_dimension=missing_dimension,
+            followup_question_count=1,
+        )
+
+    return ResponseModeDecision(
+        response_mode="answer_plus_followup",
+        missing_dimension=missing_dimension,
+        followup_question_count=1,
+    )
+
+
+def _is_music_collaboration_turn(
+    normalized_question: str,
+    collaboration_workflow: CollaborationWorkflow,
+    practical_output_mode: str | None,
+) -> bool:
+    if collaboration_workflow in {
+        CollaborationWorkflow.GENRE_FIT_REVIEW,
+        CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+        CollaborationWorkflow.ARRANGEMENT_PLANNER,
+        CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM,
+    }:
+        return True
+    if practical_output_mode is not None:
+        return True
+    music_markers = (
+        "track",
+        "drop",
+        "break",
+        "build",
+        "groove",
+        "bass",
+        "bassline",
+        "lead",
+        "hook",
+        "arrangement",
+        "mix",
+        "drum",
+        "hat",
+        "kick",
+        "percussion",
+        "arp",
+        "techno",
+        "house",
+        "melody",
+        "section",
+    )
+    return any(marker in normalized_question for marker in music_markers)
+
+
+def _track_context_strength(track_context: TrackContext | None) -> int:
+    if track_context is None:
+        return 0
+    score = 0
+    if track_context.genre:
+        score += 1
+    if track_context.bpm is not None:
+        score += 1
+    if track_context.key:
+        score += 1
+    if track_context.vibe:
+        score += 1
+    if track_context.reference_tracks:
+        score += 1
+    if track_context.current_problem:
+        score += 1
+    if track_context.current_stage:
+        score += 1
+    return score
+
+
+def _extract_arrangement_signals(
+    normalized_question: str,
+    chunks: list[RetrievedChunk],
+    workflow_input: WorkflowInput,
+) -> dict[str, object]:
+    section_keywords = _relevant_section_keywords(normalized_question)
+    has_any = bool(workflow_input.arrangement_notes and workflow_input.arrangement_notes.strip())
+    has_relevant_section = False
+    has_relevant_bars = False
+    has_relevant_energy = False
+    has_relevant_purpose = False
+
+    for chunk in chunks:
+        if not _is_arrangement_chunk(chunk):
+            continue
+        has_any = True
+        section_name = str(chunk.metadata.get("arrangement_section_name", "")).strip().lower()
+        heading_context = str(chunk.metadata.get("heading_context", "")).strip().lower()
+        combined_context = f"{section_name} {heading_context}".strip()
+        if section_keywords and not any(keyword in combined_context for keyword in section_keywords):
+            continue
+        has_relevant_section = True
+        if chunk.metadata.get("arrangement_energy") not in ("", None):
+            has_relevant_energy = True
+        if re.search(r"\bBars:\s*\d+\s*-\s*\d+\b", chunk.text):
+            has_relevant_bars = True
+        if re.search(r"\bPurpose:\s*.+", chunk.text):
+            has_relevant_purpose = True
+
+    return {
+        "has_any": has_any,
+        "has_relevant_section": has_relevant_section,
+        "has_relevant_bars": has_relevant_bars,
+        "has_relevant_energy": has_relevant_energy,
+        "has_relevant_purpose": has_relevant_purpose,
+    }
+
+
+def _detect_missing_dimension(
+    normalized_question: str,
+    *,
+    track_context: TrackContext | None,
+    workflow_input: WorkflowInput,
+    arrangement_signals: dict[str, object],
+    active_section: str,
+) -> str:
+    has_genre = bool(track_context and track_context.genre)
+    has_bpm = bool(track_context and track_context.bpm is not None)
+    has_references = bool(
+        (track_context and track_context.reference_tracks)
+        or (workflow_input.references and workflow_input.references.strip())
+    )
+    has_problem = bool(track_context and track_context.current_problem)
+    has_stage = bool(track_context and track_context.current_stage)
+    has_sound_target = bool(
+        (workflow_input.sound_palette and workflow_input.sound_palette.strip())
+        or (workflow_input.instrumentation and workflow_input.instrumentation.strip())
+        or (track_context and (track_context.vibe or track_context.reference_tracks))
+    )
+
+    arrangement_available = bool(arrangement_signals.get("has_any"))
+    has_relevant_section = bool(arrangement_signals.get("has_relevant_section"))
+    has_relevant_bars = bool(arrangement_signals.get("has_relevant_bars"))
+    has_relevant_energy = bool(arrangement_signals.get("has_relevant_energy"))
+    has_relevant_purpose = bool(arrangement_signals.get("has_relevant_purpose"))
+
+    if any(token in normalized_question for token in ("drop", "break", "build", "section", "transition")):
+        if not arrangement_available or not has_relevant_section:
+            if "break" in normalized_question:
+                return "section_role"
+            if any(token in normalized_question for token in ("drop", "hit harder", "impact", "flat")):
+                return "energy_problem_type"
+            return "arrangement_intent"
+        if "break" in normalized_question and active_section and not has_relevant_purpose:
+            return "section_role"
+        if any(token in normalized_question for token in ("drop", "hit harder", "impact", "flat")):
+            if not has_relevant_energy and not has_relevant_bars:
+                return "energy_problem_type"
+    if any(token in normalized_question for token in ("groove", "kick", "bass", "bassline", "hat", "top loop", "rhythm", "percussion")):
+        if not has_bpm or not has_genre:
+            return "groove_function"
+    if any(token in normalized_question for token in ("sound", "patch", "synth", "lead", "hook", "texture", "arp", "pluck", "stab")):
+        if not has_sound_target:
+            return "sound_target"
+    if any(token in normalized_question for token in ("mix", "muddy", "harsh", "clash", "translation", "flat", "masking")):
+        if not has_problem:
+            return "mix_problem_source"
+    if any(token in normalized_question for token in ("boris", "style", "genre", "reference", "fit")):
+        if not has_references and not has_genre:
+            return "style_fit_target"
+    if any(token in normalized_question for token in ("feels weak", "what should i change first", "feels flat", "not working")):
+        if not has_stage and not has_problem:
+            return "energy_problem_type"
+    return ""
+
+
+def _should_use_followup_only(
+    normalized_question: str,
+    *,
+    missing_dimension: str,
+    context_strength: int,
+    recent_context_present: bool,
+    arrangement_available: bool,
+    local_retrieval_weak: bool,
+) -> bool:
+    if context_strength > 0 or recent_context_present:
+        return False
+    if missing_dimension == "section_role" and "break" in normalized_question:
+        return True
+    if missing_dimension == "mix_problem_source" and any(
+        token in normalized_question for token in ("mix", "muddy", "harsh", "translation", "clash")
+    ):
+        return True
+    if missing_dimension == "style_fit_target" and local_retrieval_weak:
+        return True
+    return False
+
+
+def _question_contains_specific_style_hint(normalized_question: str) -> bool:
+    return any(
+        token in normalized_question
+        for token in ("a minor", "minor", "major", "progressive house", "techno", "garage", "boris", "melodic")
+    )
+
+
+def _references_current_track(normalized_question: str) -> bool:
+    return any(token in normalized_question for token in ("this track", "this groove", "this drop", "my track", "my groove"))
+
+
+def _relevant_section_keywords(normalized_question: str) -> tuple[str, ...]:
+    if "drop" in normalized_question:
+        return ("drop",)
+    if "break" in normalized_question:
+        return ("break", "breakdown")
+    if "build" in normalized_question:
+        return ("build", "buildup")
+    if "intro" in normalized_question:
+        return ("intro",)
+    if "outro" in normalized_question:
+        return ("outro",)
+    return ()
+
+
+def _resolve_active_section(
+    normalized_question: str,
+    *,
+    track_context: TrackContext | None,
+    chunks: list[RetrievedChunk],
+    section_focus: str = "",
+) -> tuple[str, SectionContext | None]:
+    normalized_focus = _normalize_section_key(section_focus)
+    if normalized_focus:
+        return normalized_focus, _lookup_section_context(normalized_focus, track_context, chunks)
+
+    explicit_section = _detect_section_from_text(normalized_question)
+    if explicit_section:
+        return explicit_section, _lookup_section_context(explicit_section, track_context, chunks)
+
+    arrangement_sections = _retrieved_arrangement_sections(chunks)
+    if len(arrangement_sections) == 1:
+        inferred_section = arrangement_sections[0]
+        return inferred_section, _lookup_section_context(inferred_section, track_context, chunks)
+
+    if any(token in normalized_question for token in ("this section", "that section")) and len(track_context.sections if track_context else {}) == 1:
+        inferred_section = next(iter(track_context.sections))
+        return inferred_section, _lookup_section_context(inferred_section, track_context, chunks)
+
+    return "", None
+
+
+def _lookup_section_context(
+    section_key: str,
+    track_context: TrackContext | None,
+    chunks: list[RetrievedChunk],
+) -> SectionContext | None:
+    if track_context is not None and section_key in track_context.sections:
+        return track_context.sections[section_key]
+
+    for chunk in chunks:
+        if not _is_arrangement_chunk(chunk):
+            continue
+        arrangement_section_name = str(chunk.metadata.get("arrangement_section_name", "")).strip()
+        normalized_name = _normalize_section_key(arrangement_section_name)
+        if normalized_name != section_key:
+            continue
+        return SectionContext(
+            name=arrangement_section_name or section_key,
+            bars=_extract_bars_from_chunk(chunk.text),
+            role=_extract_labeled_line(chunk.text, "Purpose"),
+            energy_level=_coerce_energy_label(chunk.metadata.get("arrangement_energy")),
+            elements=_extract_bullet_block(chunk.text, "Key Elements"),
+            issues=_extract_bullet_block(chunk.text, "Issues / Opportunities"),
+            notes="",
+        )
+    return None
+
+
+def _retrieved_arrangement_sections(chunks: list[RetrievedChunk]) -> list[str]:
+    sections: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        if not _is_arrangement_chunk(chunk):
+            continue
+        section_name = str(chunk.metadata.get("arrangement_section_name", "")).strip()
+        normalized_name = _normalize_section_key(section_name)
+        if not normalized_name or normalized_name in seen:
+            continue
+        seen.add(normalized_name)
+        sections.append(normalized_name)
+    return sections
+
+
+def _detect_section_from_text(normalized_question: str) -> str:
+    for alias, canonical in _SECTION_ALIASES:
+        if alias in normalized_question:
+            return canonical
+    return ""
+
+
+_SECTION_ALIASES: tuple[tuple[str, str], ...] = (
+    ("breakdown", "break"),
+    ("break down", "break"),
+    ("break", "break"),
+    ("build up", "build"),
+    ("build-up", "build"),
+    ("buildup", "build"),
+    ("build", "build"),
+    ("first drop", "drop"),
+    ("drop", "drop"),
+    ("main groove", "groove"),
+    ("groove", "groove"),
+    ("intro", "intro"),
+    ("outro", "outro"),
+)
+
+
+def _normalize_section_key(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    for alias, canonical in _SECTION_ALIASES:
+        if normalized == alias or alias in normalized:
+            return canonical
+    return normalized.replace(" ", "_")
+
+
+def _extract_bars_from_chunk(text: str) -> str:
+    match = re.search(r"\bBars:\s*(\d+\s*-\s*\d+)\b", text)
+    return match.group(1) if match else ""
+
+
+def _extract_labeled_line(text: str, label: str) -> str:
+    match = re.search(rf"\b{re.escape(label)}:\s*(.+)", text)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_bullet_block(text: str, heading: str) -> list[str]:
+    match = re.search(rf"##\s+{re.escape(heading)}\n((?:- .+\n?)*)", text)
+    if not match:
+        return []
+    items: list[str] = []
+    for line in match.group(1).splitlines():
+        cleaned = line.removeprefix("- ").strip()
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
+def _coerce_energy_label(value: object) -> str:
+    if value in ("", None):
+        return ""
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    if numeric <= 3:
+        return "low"
+    if numeric <= 6:
+        return "medium"
+    return "high"
+
+
 def _format_workflow_input(workflow_input: WorkflowInput) -> str:
     values = workflow_input.as_dict()
     if not values:
         return "No additional structured workflow input was provided."
     return "\n".join(f"- {key.replace('_', ' ').title()}: {value}" for key, value in values.items())
+
+
+def _track_context_update_instructions(
+    collaboration_workflow: CollaborationWorkflow,
+    *,
+    question: str,
+    track_context: TrackContext | None,
+    section_focus: str | None = None,
+) -> str:
+    if track_context is None or collaboration_workflow == CollaborationWorkflow.RESEARCH_SESSION:
+        return ""
+
+    capture_intent = _has_track_context_capture_intent(question)
+    lines = [
+        "Track Context update proposal instructions:",
+        "- When the conversation meaningfully clarifies or changes the active track state, you may append one structured update proposal.",
+        "- If nothing meaningful changed, do not output any Track Context update proposal.",
+        "- Do not mention the proposal mechanism in the normal answer.",
+        f"- The active track_id is `{track_context.track_id}`.",
+        *([f"- Current session section focus: `{section_focus.strip()}`."] if section_focus and section_focus.strip() else []),
+        "- Keep proposals conservative. Do not casually overwrite title, BPM, key, genre, or stage unless the user clearly stated or strongly corrected them.",
+        "- You may propose helpful inferred updates for current issues and next actions when they are strongly grounded in the conversation.",
+        "- Allowed scalar fields in `set_fields`: title, genre, bpm, key, status, current_stage, current_problem.",
+        "- Allowed list fields in `add_to_lists` or `remove_from_lists`: vibe, references, current_issues, next_actions.",
+        "- For section-aware updates, you may use `set_sections`, `add_section_issues`, `remove_section_issues`, `add_section_elements`, and `add_section_notes`.",
+        "- For session-only section carryover, you may use `section_focus`.",
+        "- Section keys should be simple names such as intro, groove, break, build, drop, or outro.",
+        "- Use this exact fenced JSON format only when needed:",
+        "```track_context_update",
+        "{",
+        f'  "track_id": "{track_context.track_id}",',
+        '  "summary": "Short explanation of the proposed change.",',
+        '  "set_fields": {},',
+        '  "add_to_lists": {},',
+        '  "remove_from_lists": {},',
+        '  "set_sections": {},',
+        '  "add_section_issues": {},',
+        '  "remove_section_issues": {},',
+        '  "add_section_elements": {},',
+        '  "add_section_notes": {},',
+        '  "section_focus": "",',
+        '  "confidence": "low|medium|high",',
+        '  "source_reasoning": "Short explanation grounded in the conversation."',
+        "}",
+        "```",
+    ]
+    if capture_intent:
+        lines.insert(
+            1,
+            "- The user explicitly asked to capture or update track context, so bias toward returning a proposal if the requested change is supported.",
+        )
+    return "\n".join(lines)
+
+
+def _has_track_context_capture_intent(question: str) -> bool:
+    normalized = question.strip().lower()
+    phrases = (
+        "save that to the track context",
+        "save this to the track context",
+        "update the track context",
+        "capture that as a next action",
+        "capture that",
+        "add that to current issues",
+        "add that to the track context",
+        "put that in the track context",
+    )
+    return any(phrase in normalized for phrase in phrases)
 
 
 def _format_internal_framework_block(framework_text: str) -> str:

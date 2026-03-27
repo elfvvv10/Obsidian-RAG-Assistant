@@ -49,7 +49,7 @@ class SaveTemplateTests(unittest.TestCase):
             self.assertIn('source_type: "saved_answer"', contents)
             self.assertIn('status: "draft"', contents)
             self.assertIn("indexed: false", contents)
-            self.assertIn('created_by: "obsidian_rag_assistant"', contents)
+            self.assertIn('created_by: "obsidian_track_collaborator"', contents)
             self.assertIn('created_at: "', contents)
             self.assertIn('original_question: "What are AI agents?"', contents)
 

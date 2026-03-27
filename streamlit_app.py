@@ -1,4 +1,4 @@
-"""Local Streamlit UI for the Obsidian RAG assistant."""
+"""Local Streamlit UI for Obsidian Track Collaborator."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from services.models import (
     RetrievalMode,
     RetrievalScope,
     SessionTask,
+    TrackContext,
     WorkflowInput,
     WorkflowMode,
 )
@@ -41,6 +42,7 @@ from services.track_selector_service import (
     selected_track_index,
     selected_track_path,
 )
+from services.track_context_update_review import proposal_groups
 from services.ui_session_helpers import (
     DEV_MODE_PRESET_MANUAL,
     critique_support_summary,
@@ -50,18 +52,17 @@ from services.ui_session_helpers import (
     resolve_dev_mode_preset,
     synced_dev_mode_preset_selection,
     synced_chat_provider_selection,
-    suggestion_groups,
     track_context_status,
 )
 from utils import RetrievalFilters, RetrievalOptions, current_timestamp
 
 
-st.set_page_config(page_title="Electronic Music Research Assistant", layout="wide")
+st.set_page_config(page_title="Obsidian Track Collaborator", layout="wide")
 
 
 def main() -> None:
     """Render the Streamlit app."""
-    st.title("Electronic Music Research and Collaboration Assistant")
+    st.title("Obsidian Track Collaborator")
     st.caption("Local-first collaboration for genre fit, track critique, arrangement planning, sound design, and research.")
 
     try:
@@ -187,90 +188,129 @@ def _render_sidebar(
 
         st.divider()
         st.subheader("YAML Track Context")
-        st.caption("Persistent track memory used for track-aware prompting, retrieval rewriting, and suggested updates.")
+        st.caption("Persistent memory for the current in-progress track. This is separate from reference tracks and legacy markdown context.")
         st.text_input(
             "Track ID",
             key="track_context_track_id",
-            help="Persistent YAML track-memory identifier. Load an existing track or start a new one with this ID.",
+            help="Stable internal ID for your in-progress track. Use the same ID to reopen the same persistent track memory later.",
         )
         st.checkbox(
             "Use Track Context",
             key="use_track_context",
             help="Enable persistent YAML track memory for asks and research workflows.",
         )
-        track_id = st.session_state.get("track_context_track_id", "").strip()
-        context_exists = bool(track_id) and query_service.track_context_service.exists(track_id)
+        typed_track_id = st.session_state.get("track_context_track_id", "").strip()
+        active_track_id = st.session_state.get("active_track_context_id", "").strip()
+        load_col, clear_col = st.columns(2)
+        load_clicked = load_col.button(
+            "Load Track Context",
+            use_container_width=True,
+            disabled=not typed_track_id,
+            help="Load an existing persistent track memory or initialize a new one for this Track ID.",
+        )
+        clear_active_clicked = clear_col.button(
+            "Clear Active Track",
+            use_container_width=True,
+            disabled=not active_track_id,
+            help="Clear the active Track Context for this session without deleting the saved YAML file.",
+        )
+        if load_clicked and typed_track_id:
+            context_exists = query_service.track_context_service.exists(typed_track_id)
+            loaded_context = query_service.track_context_service.load_or_create(typed_track_id)
+            st.session_state["active_track_context_id"] = typed_track_id
+            st.session_state["active_track_context_loaded_existing"] = context_exists
+            st.session_state["current_track_context"] = loaded_context
+            st.session_state["active_section_focus"] = ""
+            st.session_state["track_context_editor_synced_track_id"] = ""
+            st.rerun()
+        if clear_active_clicked:
+            st.session_state["active_track_context_id"] = ""
+            st.session_state["active_track_context_loaded_existing"] = False
+            st.session_state["current_track_context"] = None
+            st.session_state["active_section_focus"] = ""
+            st.session_state["track_context_editor_synced_track_id"] = ""
+            st.rerun()
+
         sidebar_context = None
-        if st.session_state.get("use_track_context") and track_id:
-            sidebar_context = query_service.track_context_service.load_or_create(track_id)
+        if st.session_state.get("use_track_context") and active_track_id:
+            sidebar_context = st.session_state.get("current_track_context")
+            if sidebar_context is None or getattr(sidebar_context, "track_id", "") != active_track_id:
+                sidebar_context = query_service.track_context_service.load(active_track_id)
+                st.session_state["current_track_context"] = sidebar_context
+            _sync_track_context_editor_state(sidebar_context)
             status_title, status_caption = track_context_status(
                 use_track_context=True,
-                track_id=track_id,
-                existed_before_load=context_exists,
+                entered_track_id=typed_track_id,
+                active_track_id=active_track_id,
+                existed_before_load=st.session_state.get("active_track_context_loaded_existing", False),
                 track_context=sidebar_context,
             )
             st.caption(status_title)
             st.caption(status_caption)
+            if sidebar_context.sections:
+                with st.expander("Track Sections", expanded=False):
+                    for section_key, section in sidebar_context.sections.items():
+                        parts = []
+                        if section.role:
+                            parts.append(f"role: {section.role}")
+                        if section.energy_level:
+                            parts.append(f"energy: {section.energy_level}")
+                        if section.bars:
+                            parts.append(f"bars: {section.bars}")
+                        summary = " | ".join(parts) if parts else "No extra section details yet."
+                        st.write(f"**{section.name or section_key}**")
+                        st.caption(summary)
             with st.expander("Edit Persistent Track Context", expanded=False):
                 with st.form("track_context_editor", clear_on_submit=False, enter_to_submit=False):
                     st.caption("Core Track Identity")
                     core_col_left, core_col_right = st.columns(2)
                     core_col_left.text_input(
-                        "Name",
-                        value=sidebar_context.track_name or "",
+                        "Title",
                         key="track_context_track_name",
                     )
-                    core_col_right.text_input("Genre", value=sidebar_context.genre or "", key="track_context_genre")
+                    core_col_right.text_input("Genre", key="track_context_genre")
                     detail_col_left, detail_col_right = st.columns(2)
                     detail_col_left.text_input(
                         "BPM",
-                        value="" if sidebar_context.bpm is None else str(sidebar_context.bpm),
                         key="track_context_bpm",
                     )
-                    detail_col_right.text_input("Key", value=sidebar_context.key or "", key="track_context_key")
+                    detail_col_right.text_input("Key", key="track_context_key")
                     st.caption("Current Production State")
                     focus_col_left, focus_col_right = st.columns(2)
                     stage_options = [""] + _TRACK_CONTEXT_CURRENT_STAGES
-                    current_stage = sidebar_context.current_stage or ""
                     focus_col_left.selectbox(
                         "Stage",
                         options=stage_options,
-                        index=stage_options.index(current_stage),
                         key="track_context_current_stage",
                     )
                     focus_col_right.text_input(
                         "Current Problem",
-                        value=sidebar_context.current_problem or "",
                         key="track_context_current_problem",
                     )
                     st.text_input(
                         "Vibe (comma separated)",
-                        value=", ".join(sidebar_context.vibe),
                         key="track_context_vibe",
                     )
                     st.caption("References, Issues, and Goals")
                     st.text_area(
-                        "Reference Tracks (one per line)",
-                        value="\n".join(sidebar_context.reference_tracks),
+                        "References (one per line)",
                         key="track_context_reference_tracks",
                         height=70,
                     )
                     st.text_area(
                         "Known Issues (one per line)",
-                        value="\n".join(sidebar_context.known_issues),
                         key="track_context_known_issues",
                         height=70,
                     )
                     st.text_area(
                         "Goals (one per line)",
-                        value="\n".join(sidebar_context.goals),
                         key="track_context_goals",
                         height=70,
                     )
                     saved = st.form_submit_button("Save Track Context", use_container_width=True)
                 if saved:
-                    query_service.track_context_service.update_fields(
-                        track_id,
+                    updated_context = query_service.track_context_service.update_fields(
+                        active_track_id,
                         {
                             "track_name": st.session_state["track_context_track_name"],
                             "genre": st.session_state["track_context_genre"],
@@ -288,12 +328,15 @@ def _render_sidebar(
                             "goals": _split_lines(st.session_state["track_context_goals"]),
                         },
                     )
+                    st.session_state["current_track_context"] = updated_context
+                    st.session_state["active_track_context_loaded_existing"] = True
                     st.success("Track context saved.")
         elif st.session_state.get("use_track_context"):
             status_title, status_caption = track_context_status(
                 use_track_context=True,
-                track_id=track_id,
-                existed_before_load=False,
+                entered_track_id=typed_track_id,
+                active_track_id=active_track_id,
+                existed_before_load=st.session_state.get("active_track_context_loaded_existing", False),
                 track_context=sidebar_context,
             )
             st.caption(status_title)
@@ -301,8 +344,9 @@ def _render_sidebar(
         else:
             status_title, status_caption = track_context_status(
                 use_track_context=False,
-                track_id=track_id,
-                existed_before_load=False,
+                entered_track_id=typed_track_id,
+                active_track_id=active_track_id,
+                existed_before_load=st.session_state.get("active_track_context_loaded_existing", False),
                 track_context=sidebar_context,
             )
             st.caption(status_title)
@@ -375,6 +419,11 @@ def _render_ask_tab(
             "new_task_notes",
         ):
             st.session_state[key] = ""
+        st.session_state["active_track_context_id"] = ""
+        st.session_state["active_track_context_loaded_existing"] = False
+        st.session_state["current_track_context"] = None
+        st.session_state["active_section_focus"] = ""
+        st.session_state["track_context_editor_synced_track_id"] = ""
         st.session_state["collaboration_workflow"] = CollaborationWorkflow.GENERAL_ASK.value
         st.session_state["workflow_mode"] = WorkflowMode.DIRECT.value
         st.session_state["use_track_context"] = True
@@ -657,12 +706,25 @@ def _render_ask_tab(
             clear_clicked = True
         st.caption("Reset Session clears the current chat, tasks, and composer/workflow context for this session.")
 
+        if active_track_context is not None:
+            active_track_name = active_track_context.track_name or active_track_context.track_id
+            st.caption(f"Active track memory: `{active_track_name}` (`{active_track_context.track_id}`).")
+            if st.session_state.get("active_section_focus", "").strip():
+                st.caption(f"Current section focus: `{st.session_state['active_section_focus'].strip()}`.")
+        elif st.session_state.get("use_track_context"):
+            st.caption("No active track memory loaded for this session.")
+
         if st.session_state.get("last_query_response") and st.session_state["last_query_response"].has_saved:
             st.success(f"Saved to {st.session_state['last_query_response'].saved_path}")
         else:
-            st.caption(
-                f"This workflow saves by default to `{music_workflow_service.default_save_path(selected_workflow)}`."
-            )
+            save_caption = f"This workflow saves by default to `{music_workflow_service.default_save_path(selected_workflow)}`."
+            if active_track_context is not None:
+                save_caption = (
+                    f"This workflow saves by default to "
+                    f"`{music_workflow_service.default_save_path(selected_workflow, track_id=active_track_context.track_id)}`."
+                )
+                save_caption += f" Saved answers will include Track Context metadata for `{active_track_context.track_name or active_track_context.track_id}`."
+            st.caption(save_caption)
 
         _render_task_panel()
         chat_detail_mount = st.container()
@@ -684,7 +746,13 @@ def _render_ask_tab(
             _render_critique_support_panel(*critique_status)
         if chat_workspace_enabled:
             st.markdown("### Session Chat")
-            st.caption("Read the latest turn above, then reply immediately below to keep the collaboration moving.")
+            if active_track_context is not None:
+                st.caption(
+                    f"Working with active track memory for `{active_track_context.track_name or active_track_context.track_id}`. "
+                    "Read the latest turn above, then reply immediately below to keep the collaboration moving."
+                )
+            else:
+                st.caption("Read the latest turn above, then reply immediately below to keep the collaboration moving.")
             _render_chat_debug_panel(selected_workflow.value)
             with st.container(border=True):
                 _render_chat_history()
@@ -755,8 +823,10 @@ def _render_ask_tab(
                     answer_mode=st.session_state["answer_mode"],
                     collaboration_workflow=st.session_state["collaboration_workflow"],
                     workflow_input=_current_workflow_input(),
-                    track_id=st.session_state["track_context_track_id"].strip() or None,
+                    track_id=_active_yaml_track_id() or None,
                     use_track_context=st.session_state["use_track_context"],
+                    track_context=active_track_context,
+                    section_focus=st.session_state.get("active_section_focus", "").strip() or None,
                     chat_provider_override=_session_chat_provider_override() or None,
                     chat_model_override=_session_chat_model_override() or None,
                     recent_conversation=_recent_conversation_for_prompt(
@@ -783,6 +853,7 @@ def _render_ask_tab(
                             workflow_input=request.workflow_input,
                             track_id=request.track_id,
                             use_track_context=request.use_track_context,
+                            track_context=request.track_context,
                             chat_provider_override=request.chat_provider_override,
                             chat_model_override=request.chat_model_override,
                             max_subquestions=st.session_state["max_subquestions"],
@@ -823,24 +894,58 @@ def _render_ask_tab(
             st.caption(
                 f"Active chat provider/model: `{response.debug.active_chat_provider or _effective_chat_provider(config)}` / `{response.debug.active_chat_model or _effective_chat_model(config)}`"
             )
+            if response.track_context is not None:
+                st.caption(
+                    f"Answered with Track Context for `{response.track_context.track_name or response.track_context.track_id}` (`{response.track_context.track_id}`)."
+                )
             st.write(response.answer)
-            if response.track_context_suggestions is not None and response.track_context is not None:
-                st.markdown("#### Suggested Track Context Updates")
-                st.caption("These are suggested updates for persistent track memory from the latest answer. They are not saved until you apply them.")
+            if response.track_context_update is not None and response.track_context is not None:
+                base_track_context = active_track_context or response.track_context
+                preview_context = query_service.track_context_update_service.preview(
+                    base_track_context,
+                    response.track_context_update,
+                )
+                st.markdown("#### Suggested Track Context Update")
+                st.caption("This proposal is reviewable first, then session-applied. YAML persistence still happens only when you save Track Context from the sidebar.")
                 with st.container(border=True):
-                    for label, value in suggestion_groups(response.track_context_suggestions):
-                        st.markdown(f"**{label}**")
-                        if isinstance(value, list):
-                            for item in value:
-                                st.write(f"- {item}")
-                        else:
-                            st.write(value)
-                if st.button("Apply Suggested Updates", use_container_width=False):
+                    if response.track_context_update.summary:
+                        st.write(f"**Summary:** {response.track_context_update.summary}")
+                    if response.track_context_update.confidence:
+                        st.write(f"**Confidence:** {response.track_context_update.confidence}")
+                    if response.track_context_update.source_reasoning:
+                        st.write(f"**Why this was suggested:** {response.track_context_update.source_reasoning}")
+                    for heading, items in proposal_groups(response.track_context_update):
+                        st.markdown(f"**{heading}**")
+                        for item in items:
+                            st.write(f"- {item}")
+
+                st.markdown("#### Updated Track Context Preview")
+                with st.container(border=True):
+                    preview_title, preview_caption, preview_rows = current_track_summary(
+                        preview_context,
+                        use_track_context=True,
+                        track_id=preview_context.track_id,
+                    )
+                    st.markdown(f"**{preview_title}**")
+                    st.caption(f"Read-only preview after applying the suggested update. {preview_caption}")
+                    preview_left, preview_right = st.columns(2)
+                    midpoint = (len(preview_rows) + 1) // 2
+                    for label, value in preview_rows[:midpoint]:
+                        preview_left.write(f"**{label}:** {value}")
+                    for label, value in preview_rows[midpoint:]:
+                        preview_right.write(f"**{label}:** {value}")
+
+                apply_disabled = _active_yaml_track_id() == "" or response.track_context is None
+                if st.button("Apply To Active Track Context", use_container_width=False, disabled=apply_disabled):
                     try:
-                        updated_context = query_service.track_context_service.apply_suggestions(
-                            response.track_context.track_id,
-                            response.track_context_suggestions,
+                        updated_context = query_service.track_context_update_service.apply(
+                            base_track_context,
+                            response.track_context_update,
                         )
+                        st.session_state["current_track_context"] = updated_context
+                        if response.track_context_update.section_focus.strip():
+                            st.session_state["active_section_focus"] = response.track_context_update.section_focus.strip()
+                        st.session_state["track_context_editor_synced_track_id"] = ""
                         st.session_state["last_query_response"] = QueryResponse(
                             answer_result=response.answer_result,
                             warnings=response.warnings,
@@ -852,9 +957,10 @@ def _render_ask_tab(
                             collaboration_workflow=response.collaboration_workflow,
                             workflow_input=response.workflow_input,
                             track_context=updated_context,
-                            track_context_suggestions=None,
+                            track_context_update=None,
+                            track_context_suggestions=response.track_context_suggestions,
                         )
-                        st.session_state["track_context_apply_success"] = "Suggested Track Context updates applied."
+                        st.session_state["track_context_apply_success"] = "Track Context update applied to the active session track."
                         st.rerun()
                     except Exception as exc:
                         st.error(str(exc))
@@ -1085,17 +1191,26 @@ def _render_research_response(
 
 
 def _active_yaml_track_context(query_service: QueryService):
-    track_id = st.session_state.get("track_context_track_id", "").strip()
+    track_id = _active_yaml_track_id()
     if not st.session_state.get("use_track_context") or not track_id:
         return None
-    return query_service.track_context_service.load_or_create(track_id)
+    active_context = st.session_state.get("current_track_context")
+    if active_context is not None and getattr(active_context, "track_id", "") == track_id:
+        return active_context
+    loaded_context = query_service.track_context_service.load(track_id)
+    st.session_state["current_track_context"] = loaded_context
+    return loaded_context
+
+
+def _active_yaml_track_id() -> str:
+    return st.session_state.get("active_track_context_id", "").strip()
 
 
 def _render_current_track_summary(track_context) -> None:
     title, caption, rows = current_track_summary(
         track_context,
         use_track_context=st.session_state.get("use_track_context", True),
-        track_id=st.session_state.get("track_context_track_id", ""),
+        track_id=_active_yaml_track_id(),
     )
     with st.container(border=True):
         st.markdown(f"### {title}")
@@ -1116,6 +1231,23 @@ def _render_critique_support_panel(title: str, lines: list[str]) -> None:
         st.caption(title)
         for line in lines:
             st.write(f"- {line}")
+
+
+def _sync_track_context_editor_state(track_context: TrackContext) -> None:
+    synced_track_id = st.session_state.get("track_context_editor_synced_track_id", "").strip()
+    if synced_track_id == track_context.track_id:
+        return
+    st.session_state["track_context_track_name"] = track_context.track_name or ""
+    st.session_state["track_context_genre"] = track_context.genre or ""
+    st.session_state["track_context_bpm"] = "" if track_context.bpm is None else str(track_context.bpm)
+    st.session_state["track_context_key"] = track_context.key or ""
+    st.session_state["track_context_current_stage"] = track_context.current_stage or ""
+    st.session_state["track_context_current_problem"] = track_context.current_problem or ""
+    st.session_state["track_context_vibe"] = ", ".join(track_context.vibe)
+    st.session_state["track_context_reference_tracks"] = "\n".join(track_context.reference_tracks)
+    st.session_state["track_context_known_issues"] = "\n".join(track_context.known_issues)
+    st.session_state["track_context_goals"] = "\n".join(track_context.goals)
+    st.session_state["track_context_editor_synced_track_id"] = track_context.track_id
 
 
 def _render_ingest_tab(ingestion_service: IngestionService) -> None:
@@ -1305,6 +1437,10 @@ def _render_debug_section(response: QueryResponse, original_question: str) -> No
                 "non_curated_note_chunks": response.debug.non_curated_note_chunks,
                 "generated_or_imported_chunks": response.debug.generated_or_imported_chunks,
                 "active_chat_model": response.debug.active_chat_model,
+                "response_mode_selected": response.debug.response_mode_selected,
+                "followup_triggered": response.debug.followup_triggered,
+                "missing_dimension": response.debug.missing_dimension,
+                "active_section": response.debug.active_section,
                 "local_retrieval_weak": response.debug.local_retrieval_weak,
                 "reranking_applied": response.debug.reranking_applied,
                 "evidence_types_used": list(response.debug.evidence_types_used),
@@ -1789,6 +1925,11 @@ def _init_session_state(config: AppConfig) -> None:
         "workflow_track_selector": "None",
         "workflow_track_selector_applied_path": "",
         "track_context_track_id": "",
+        "active_track_context_id": "",
+        "active_track_context_loaded_existing": False,
+        "current_track_context": None,
+        "active_section_focus": "",
+        "track_context_editor_synced_track_id": "",
         "use_track_context": True,
         "track_context_track_name": "",
         "track_context_genre": "",

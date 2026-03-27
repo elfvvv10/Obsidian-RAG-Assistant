@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import requests
@@ -27,6 +28,7 @@ class OllamaChatClient:
 
     def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
         self.config = config
+        self.provider = "ollama"
         self.base_url = config.ollama_base_url
         self.model = (model_override or config.ollama_chat_model).strip()
         self.timeout = config.ollama_timeout_seconds
@@ -72,6 +74,46 @@ class OllamaChatClient:
         if not content:
             raise RuntimeError("Ollama returned an empty chat response.")
         return content
+
+    def answer_with_json_schema(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Request structured JSON output from Ollama when supported."""
+        self._ensure_model_available()
+        response = self._post_with_retry(
+            "/api/chat",
+            json={
+                "model": self.model,
+                "stream": False,
+                "format": {
+                    "type": "object",
+                    "properties": json_schema.get("properties", {}),
+                    "required": json_schema.get("required", []),
+                    "additionalProperties": json_schema.get("additionalProperties", False),
+                },
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+        )
+        payload = response.json()
+        message = payload.get("message", {})
+        content = message.get("content", "").strip()
+        if not content:
+            raise RuntimeError("Ollama returned an empty structured chat response.")
+        try:
+            loaded = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Ollama returned invalid structured JSON output.") from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError("Ollama returned a non-object structured response.")
+        return loaded
 
     def _ensure_model_available(self) -> None:
         available_names = set(self.list_available_models())
@@ -200,6 +242,7 @@ class OpenAIChatClient:
 
     def __init__(self, config: AppConfig, *, model_override: str | None = None) -> None:
         self.config = config
+        self.provider = "openai"
         self.base_url = config.openai_base_url.rstrip("/")
         self.api_key = config.openai_api_key.strip()
         self.model = (model_override or config.openai_chat_model).strip()
@@ -235,6 +278,50 @@ class OpenAIChatClient:
         if not content:
             raise RuntimeError("OpenAI chat provider returned an empty chat response.")
         return content
+
+    def answer_with_json_schema(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema_name: str,
+        json_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Request structured JSON output from an OpenAI-compatible chat endpoint."""
+        response = self._request(
+            "POST",
+            "/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": json_schema,
+                    },
+                },
+            },
+        )
+        payload = response.json()
+        choices = payload.get("choices", [])
+        if not choices:
+            raise RuntimeError("OpenAI chat provider returned no structured choices.")
+        message = choices[0].get("message", {})
+        content = _extract_openai_message_text(message)
+        if not content:
+            raise RuntimeError("OpenAI chat provider returned an empty structured response.")
+        try:
+            loaded = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("OpenAI chat provider returned invalid structured JSON output.") from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError("OpenAI chat provider returned a non-object structured response.")
+        return loaded
 
     def _request(self, method: str, endpoint: str, **kwargs: Any) -> Response:
         headers = kwargs.pop("headers", {})

@@ -2,7 +2,7 @@
 tags: [system, roadmap, core]
 ---
 
-# Obsidian RAG Assistant — Roadmap (v1.0)
+# Obsidian Track Collaborator — Roadmap (v1.0)
 
 ## 🎯 Core Vision
 Transform the assistant into a conversational, session-aware creative collaborator for electronic music production.

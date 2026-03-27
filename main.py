@@ -1,4 +1,4 @@
-"""CLI entrypoint for the local Obsidian RAG assistant."""
+"""CLI entrypoint for Obsidian Track Collaborator."""
 
 from __future__ import annotations
 
@@ -18,12 +18,14 @@ from services.models import (
     AnswerMode,
     IngestionRequest,
     QueryRequest,
+    QueryResponse,
     ResearchRequest,
     RetrievalMode,
     RetrievalScope,
 )
 from services.query_service import QueryService
 from services.research_service import ResearchService
+from services.track_context_update_review import proposal_groups
 from services.web_search_service import WebSearchService
 from utils import Note
 from utils import RetrievalFilters, RetrievalOptions, get_logger
@@ -63,6 +65,9 @@ def main() -> int:
                 retrieval_scope=args.retrieval_scope,
                 retrieval_mode=args.retrieval_mode,
                 answer_mode=args.answer_mode,
+                track_id=args.track_id,
+                use_track_context=args.use_track_context,
+                section_focus=args.section_focus,
             )
         elif args.command == "research":
             run_research(
@@ -108,7 +113,7 @@ def main() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser."""
-    parser = argparse.ArgumentParser(description="Local Obsidian RAG assistant")
+    parser = argparse.ArgumentParser(description="Obsidian Track Collaborator")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("index", help="Build the vector index from the configured vault")
@@ -170,8 +175,13 @@ def run_ask(
     retrieval_scope: str = "knowledge",
     retrieval_mode: str = "local_only",
     answer_mode: str = "balanced",
+    track_id: str | None = None,
+    use_track_context: bool = False,
+    section_focus: str | None = None,
 ) -> None:
     """Answer a question from the indexed vault."""
+    if use_track_context and not (track_id or "").strip():
+        raise ValueError("--use-track-context requires --track-id.")
     if top_k is not None and top_k < 1:
         raise ValueError("--top-k must be at least 1.")
     if candidate_count is not None and candidate_count < 1:
@@ -209,6 +219,9 @@ def run_ask(
         retrieval_scope=retrieval_scope,
         retrieval_mode=retrieval_mode,
         answer_mode=answer_mode,
+        track_id=track_id.strip() if track_id else None,
+        use_track_context=use_track_context,
+        section_focus=section_focus.strip() if section_focus else None,
     )
 
     response = query_service.ask(request)
@@ -230,6 +243,12 @@ def run_ask(
     for warning in response.warnings:
         print(f"\nWarning: {warning}")
 
+    _maybe_review_track_context_update(
+        query_service,
+        response,
+        explicit_track_id=track_id,
+    )
+
     if auto_save or config.auto_save_answer:
         saved_path = save_answer(
             config.draft_answers_path,
@@ -238,10 +257,17 @@ def run_ask(
             source_type="saved_answer",
             status="draft",
             indexed=False,
+            track_context=response.track_context,
+            track_context_update=response.track_context_update,
+            active_section_focus=response.debug.active_section or section_focus,
         )
         logger.info("Saved answer to %s", saved_path)
     elif prompt_to_save():
-        saved_response = query_service.save(question, response.answer_result)
+        saved_response = query_service.save(
+            question,
+            response.answer_result,
+            existing_response=response,
+        )
         logger.info("Saved answer to %s", saved_response.saved_path)
 
 
@@ -464,6 +490,19 @@ def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
         default=AnswerMode.BALANCED.value,
         help="Choose strict evidence-bound answers, balanced evidence-first answers, or exploratory synthesis.",
     )
+    parser.add_argument(
+        "--track-id",
+        help="Active in-progress track ID for YAML Track Context memory.",
+    )
+    parser.add_argument(
+        "--use-track-context",
+        action="store_true",
+        help="Load YAML Track Context for the provided --track-id before answering.",
+    )
+    parser.add_argument(
+        "--section-focus",
+        help="Optional active section focus to carry into the current turn, such as drop or breakdown.",
+    )
 
 
 def _config_with_index_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
@@ -490,6 +529,84 @@ def _config_with_index_overrides(config: AppConfig, args: argparse.Namespace) ->
         chunk_overlap=chunk_overlap,
         chunking_strategy=chunking_strategy,
     )
+
+
+def _maybe_review_track_context_update(
+    query_service: QueryService,
+    response: QueryResponse,
+    *,
+    explicit_track_id: str | None,
+) -> None:
+    proposal = response.track_context_update
+    active_track_context = response.track_context
+    if proposal is None or active_track_context is None or proposal.is_empty():
+        return
+
+    print("\nSuggested Track Context Update")
+    print("-----------------------------")
+    if proposal.summary.strip():
+        print(f"Summary: {proposal.summary.strip()}")
+    if proposal.confidence.strip():
+        print(f"Confidence: {proposal.confidence.strip()}")
+    if proposal.source_reasoning.strip():
+        print(f"Why suggested: {proposal.source_reasoning.strip()}")
+    for heading, items in proposal_groups(proposal):
+        print(f"\n{heading}")
+        for item in items:
+            print(f"- {item}")
+
+    preview_context = query_service.track_context_update_service.preview(
+        active_track_context,
+        proposal,
+    )
+    print("\nUpdated Track Context Preview")
+    print("----------------------------")
+    print(f"Track ID: {preview_context.track_id}")
+    if preview_context.track_name:
+        print(f"Title: {preview_context.track_name}")
+    if preview_context.genre:
+        print(f"Genre: {preview_context.genre}")
+    if preview_context.current_stage:
+        print(f"Current Stage: {preview_context.current_stage}")
+    if preview_context.current_problem:
+        print(f"Current Problem: {preview_context.current_problem}")
+    if preview_context.known_issues:
+        print(f"Known Issues: {', '.join(preview_context.known_issues)}")
+    if preview_context.goals:
+        print(f"Goals: {', '.join(preview_context.goals)}")
+    if preview_context.sections:
+        print("Sections:")
+        for section_key, section in preview_context.sections.items():
+            summary_parts = [section.name or section_key]
+            if section.role:
+                summary_parts.append(f"role={section.role}")
+            if section.energy_level:
+                summary_parts.append(f"energy={section.energy_level}")
+            if section.bars:
+                summary_parts.append(f"bars={section.bars}")
+            if section.issues:
+                summary_parts.append(f"issues={', '.join(section.issues)}")
+            print(f"- {section_key}: {' | '.join(summary_parts)}")
+
+    if proposal.section_focus.strip():
+        print(
+            f"\nSession note: section focus would move to `{proposal.section_focus.strip()}` for the next turn."
+        )
+
+    target_track_id = explicit_track_id.strip() if explicit_track_id else active_track_context.track_id
+    if not target_track_id:
+        return
+    if not _prompt_yes_no("\nApply this Track Context update to the YAML file now? (y/n): "):
+        return
+
+    updated_context = query_service.track_context_update_service.apply(active_track_context, proposal)
+    saved_path = query_service.track_context_service.save(updated_context)
+    print(f"Saved updated Track Context to {saved_path}")
+
+
+def _prompt_yes_no(prompt_text: str) -> bool:
+    response = input(prompt_text).strip().lower()
+    return response in {"y", "yes"}
 
 
 def _resolve_note_links(notes: list[Note]) -> None:

@@ -28,7 +28,7 @@ def build_ingested_markdown_note(
         f'source_type: "{escape_frontmatter(source_type)}"',
         f'status: "{escape_frontmatter(status)}"',
         f"indexed: {'true' if indexed else 'false'}",
-        'created_by: "obsidian_rag_assistant"',
+        'created_by: "obsidian_track_collaborator"',
         f'created_at: "{timestamp}"',
         f'source_url: "{escape_frontmatter(source_url)}"',
         f'ingested_at: "{timestamp}"',

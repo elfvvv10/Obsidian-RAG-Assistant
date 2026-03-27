@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TypeAlias
 
 from config import AppConfig
 from embeddings import OllamaEmbeddingClient
-from llm import OllamaChatClient
 from model_clients import ChatModelClient
-from model_provider import configured_chat_model, create_chat_client, create_embedding_client, effective_chat_provider
+from model_provider import (
+    chat_provider_supports_structured_json,
+    configured_chat_model,
+    create_chat_client,
+    create_embedding_client,
+    effective_chat_provider,
+)
 from retriever import Retriever, RetrievalDebugResult
 from saver import save_answer
 from services.common import ensure_index_compatible
@@ -31,10 +37,17 @@ from services.models import (
     WebQueryStrategy,
     WorkflowInput,
 )
-from services.prompt_service import PromptService, answer_uses_inference, build_citation_sources, enforce_citation_summary
+from services.prompt_service import (
+    PromptPayload,
+    PromptService,
+    answer_uses_inference,
+    build_citation_sources,
+    enforce_citation_summary,
+)
 from services.track_context_suggestion_service import TrackContextSuggestionService
 from services.track_query_rewrite_service import TrackQueryRewriteService
 from services.track_context_service import TrackContextService
+from services.track_context_update_service import TrackContextUpdateService
 from services.web_alignment_service import WebAlignmentResult, WebAlignmentService
 from services.web_search_service import WebSearchService
 from utils import AnswerResult, RetrievedChunk, get_logger
@@ -43,6 +56,7 @@ from web_search import WebSearchResult
 
 
 logger = get_logger()
+ChatClientOverride: TypeAlias = type[ChatModelClient] | None
 
 
 class QueryService:
@@ -53,7 +67,7 @@ class QueryService:
         config: AppConfig,
         *,
         embedding_client_cls: type[OllamaEmbeddingClient] = OllamaEmbeddingClient,
-        chat_client_cls: type[OllamaChatClient] = OllamaChatClient,
+        chat_client_cls: ChatClientOverride = None,
         retriever_cls: type[Retriever] = Retriever,
         vector_store_cls: type[VectorStore] = VectorStore,
         web_search_service_cls: type[WebSearchService] = WebSearchService,
@@ -75,6 +89,7 @@ class QueryService:
         self.track_context_service = TrackContextService(config)
         self.track_query_rewrite_service = TrackQueryRewriteService()
         self.track_context_suggestion_service = TrackContextSuggestionService()
+        self.track_context_update_service = TrackContextUpdateService()
         self._last_web_alignment: WebAlignmentResult | None = None
         self._last_web_attempts: list[WebSearchAttemptInfo] = []
 
@@ -129,7 +144,7 @@ class QueryService:
                 web_search_service=web_search_service,
                 web_alignment_service=web_alignment_service,
             )
-            answer_result = _build_answer_result(
+            answer_result, prompt_payload = _build_answer_result(
                 workflow_plan.prompt_text,
                 final_chunks,
                 chat_client,
@@ -142,9 +157,16 @@ class QueryService:
                 collaboration_workflow=request.collaboration_workflow,
                 workflow_input=request.workflow_input,
                 track_context=track_context,
+                section_focus=request.section_focus,
                 recent_conversation=request.recent_conversation,
                 current_tasks=request.current_tasks,
                 web_alignment=self._last_web_alignment,
+            )
+            answer_result, track_context_update = self._answer_with_track_context_update(
+                answer_result,
+                question=request.question,
+                chat_client=chat_client,
+                track_context=track_context,
             )
             initial_candidates = []
             reranking_applied = bool(request.options.rerank or request.options.boost_tags)
@@ -166,7 +188,7 @@ class QueryService:
                 web_search_service=web_search_service,
                 web_alignment_service=web_alignment_service,
             )
-            answer_result = _build_answer_result(
+            answer_result, prompt_payload = _build_answer_result(
                 workflow_plan.prompt_text,
                 final_chunks,
                 chat_client,
@@ -179,9 +201,16 @@ class QueryService:
                 collaboration_workflow=request.collaboration_workflow,
                 workflow_input=request.workflow_input,
                 track_context=track_context,
+                section_focus=request.section_focus,
                 recent_conversation=request.recent_conversation,
                 current_tasks=request.current_tasks,
                 web_alignment=self._last_web_alignment,
+            )
+            answer_result, track_context_update = self._answer_with_track_context_update(
+                answer_result,
+                question=request.question,
+                chat_client=chat_client,
+                track_context=track_context,
             )
             reranking_applied = retrieval_debug.reranking_applied
             reranking_changed = retrieval_debug.reranking_changed
@@ -234,6 +263,8 @@ class QueryService:
                 workflow_type=request.collaboration_workflow.value,
                 workflow_input=request.workflow_input.as_dict(),
                 track_context=track_context,
+                track_context_update=track_context_update,
+                active_section_focus=request.section_focus,
             )
             logger.info("Saved answer to %s", saved_path)
 
@@ -289,6 +320,14 @@ class QueryService:
                     ),
                 ),
                 imported_genres_eligible=eligible_import_genres,
+                response_mode_selected=(
+                    prompt_payload.response_mode if prompt_payload is not None else "direct_answer"
+                ),
+                followup_triggered=bool(
+                    prompt_payload is not None and prompt_payload.response_mode != "direct_answer"
+                ),
+                missing_dimension=prompt_payload.missing_dimension if prompt_payload is not None else "",
+                active_section=prompt_payload.active_section if prompt_payload is not None else "",
                 hallucination_guard_warnings=tuple(
                     _build_guard_warnings(
                         answer_result=answer_result,
@@ -304,8 +343,37 @@ class QueryService:
             collaboration_workflow=request.collaboration_workflow,
             workflow_input=request.workflow_input,
             track_context=track_context,
+            track_context_update=track_context_update,
             track_context_suggestions=track_context_suggestions,
         )
+
+    def _answer_with_track_context_update(
+        self,
+        answer_result: AnswerResult,
+        *,
+        question: str,
+        chat_client: ChatModelClient,
+        track_context: TrackContext | None,
+    ) -> tuple[AnswerResult, object | None]:
+        cleaned_answer, proposal = self.track_context_update_service.extract(
+            answer_result.answer,
+            track_context,
+        )
+        if proposal is None:
+            proposal = self.track_context_update_service.request_structured_proposal(
+                chat_client,
+                question=question,
+                answer=cleaned_answer,
+                track_context=track_context,
+                structured_output_supported=chat_provider_supports_structured_json(
+                    self.config,
+                    provider_override=getattr(chat_client, "provider", None),
+                ),
+            )
+        if cleaned_answer == answer_result.answer:
+            return answer_result, proposal
+        return replace(answer_result, answer=cleaned_answer), proposal
+
     def save(
         self,
         question: str,
@@ -317,9 +385,16 @@ class QueryService:
         """Persist an existing answer result and return updated response info."""
         saved_path = save_answer(
             self.music_workflow_service.default_save_path(
-                existing_response.collaboration_workflow
-                if existing_response is not None
-                else CollaborationWorkflow.GENERAL_ASK
+                (
+                    existing_response.collaboration_workflow
+                    if existing_response is not None
+                    else CollaborationWorkflow.GENERAL_ASK
+                ),
+                track_id=(
+                    existing_response.track_context.track_id
+                    if existing_response is not None and existing_response.track_context is not None
+                    else None
+                ),
             ),
             question,
             answer_result,
@@ -344,6 +419,16 @@ class QueryService:
             ),
             track_context=(
                 existing_response.track_context
+                if existing_response is not None
+                else None
+            ),
+            track_context_update=(
+                existing_response.track_context_update
+                if existing_response is not None
+                else None
+            ),
+            active_section_focus=(
+                existing_response.debug.active_section
                 if existing_response is not None
                 else None
             ),
@@ -635,16 +720,20 @@ def _build_answer_result(
     collaboration_workflow=CollaborationWorkflow.GENERAL_ASK,
     workflow_input: WorkflowInput | None = None,
     track_context: TrackContext | None = None,
+    section_focus: str | None = None,
     recent_conversation: list[ChatMessage] | None = None,
     current_tasks: list[SessionTask] | None = None,
     web_alignment: WebAlignmentResult | None = None,
-) -> AnswerResult:
+) -> tuple[AnswerResult, PromptPayload | None]:
     web_results = web_results or []
     if not chunks and not web_results:
-        return AnswerResult(
-            answer=_insufficient_evidence_message(answer_mode),
-            sources=[],
-            retrieved_chunks=[],
+        return (
+            AnswerResult(
+                answer=_insufficient_evidence_message(answer_mode),
+                sources=[],
+                retrieved_chunks=[],
+            ),
+            None,
         )
 
     if answer_mode == AnswerMode.STRICT and local_retrieval_weak and not web_results:
@@ -652,7 +741,7 @@ def _build_answer_result(
         answer = _insufficient_evidence_message(answer_mode)
         if citation_sources:
             answer = f"{answer}\n\nAvailable evidence:\n" + "\n".join(citation_sources)
-        return AnswerResult(answer=answer, sources=citation_sources, retrieved_chunks=chunks)
+        return AnswerResult(answer=answer, sources=citation_sources, retrieved_chunks=chunks), None
 
     prompt_payload = prompt_service.build_prompt_payload(
         question,
@@ -667,6 +756,7 @@ def _build_answer_result(
         track_id=track_context.track_id if track_context is not None else None,
         use_track_context=track_context is not None,
         track_context=track_context,
+        section_focus=section_focus,
         recent_conversation=recent_conversation,
         current_tasks=current_tasks,
         web_query_used=web_alignment.query if web_alignment else question,
@@ -677,7 +767,7 @@ def _build_answer_result(
     answer = enforce_citation_summary(answer, prompt_payload.citation_labels, answer_mode)
     sources, _ = build_citation_sources(chunks, web_results)
 
-    return AnswerResult(answer=answer, sources=sources, retrieved_chunks=chunks)
+    return AnswerResult(answer=answer, sources=sources, retrieved_chunks=chunks), prompt_payload
 
 
 def _build_warnings(

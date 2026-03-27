@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import unittest
 
-from services.models import CollaborationWorkflow, TrackContext, TrackContextSuggestions
+from services.models import (
+    CollaborationWorkflow,
+    TrackContext,
+    TrackContextSuggestions,
+    TrackContextUpdateProposal,
+)
+from services.track_context_update_review import proposal_groups
 from services.ui_session_helpers import (
     DEV_MODE_PRESET_FAST,
     DEV_MODE_PRESET_LOCAL,
@@ -49,19 +55,33 @@ class UISessionHelpersTests(unittest.TestCase):
         self.assertIn("Moonlit Driver", caption)
         self.assertIn(("Track ID", "moonlit_driver"), rows)
         self.assertIn(("Vibe", "driving, euphoric"), rows)
-        self.assertIn(("Reference Tracks", "Tripchain"), rows)
+        self.assertIn(("Title", "Moonlit Driver"), rows)
+        self.assertIn(("References", "Tripchain"), rows)
         self.assertIn(("Current Problem", "drop lacks contrast"), rows)
 
     def test_track_context_status_describes_loaded_existing_context(self) -> None:
         title, caption = track_context_status(
             use_track_context=True,
-            track_id="moonlit_driver",
+            entered_track_id="moonlit_driver",
+            active_track_id="moonlit_driver",
             existed_before_load=True,
             track_context=TrackContext(track_id="moonlit_driver", track_name="Moonlit Driver"),
         )
 
         self.assertIn("Loaded existing track memory", title)
-        self.assertIn("saved YAML Track Context", caption)
+        self.assertIn("active in-progress track", caption)
+
+    def test_track_context_status_describes_ready_to_load_track(self) -> None:
+        title, caption = track_context_status(
+            use_track_context=True,
+            entered_track_id="warehouse-hypnosis-01",
+            active_track_id="",
+            existed_before_load=False,
+            track_context=None,
+        )
+
+        self.assertIn("ready to load", title)
+        self.assertIn("Load Track Context", caption)
 
     def test_critique_support_summary_distinguishes_arrangement_support(self) -> None:
         title, lines = critique_support_summary(
@@ -106,6 +126,27 @@ class UISessionHelpersTests(unittest.TestCase):
             [
                 ("Original question", "help with the bassline"),
                 ("Rewritten retrieval query", "help with the bassline progressive house first drop"),
+            ],
+        )
+
+    def test_proposal_groups_formats_update_sections_compactly(self) -> None:
+        groups = proposal_groups(
+            TrackContextUpdateProposal(
+                summary="Capture the current drop issue.",
+                set_fields={"genre": "progressive house"},
+                add_to_lists={"next_actions": ["shorten the fill before the drop"]},
+                set_sections={"drop": {"role": "main payoff", "energy_level": "high"}},
+                section_focus="drop",
+            )
+        )
+
+        self.assertEqual(
+            groups,
+            [
+                ("Set Fields", ["genre: progressive house"]),
+                ("Add To Lists", ["next_actions: shorten the fill before the drop"]),
+                ("Set Sections", ["drop: role=main payoff | energy_level=high"]),
+                ("Section Focus", ["drop"]),
             ],
         )
 

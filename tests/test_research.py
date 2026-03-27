@@ -5,8 +5,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from config import AppConfig
+from llm import OpenAIChatClient
 from services.models import QueryDebugInfo, QueryResponse, ResearchRequest, TrackContext, WorkflowInput
 from services.research_service import ResearchService
 from utils import AnswerResult, RetrievedChunk
@@ -134,6 +136,55 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(tracking["last_query_provider_override"], "openai")
         self.assertEqual(response.active_chat_provider, "openai")
 
+    def test_research_uses_openai_client_when_openai_provider_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            config.chat_provider = "openai"
+            config.openai_api_key = "test-key"
+            config.openai_chat_model = "gpt-4.1-mini"
+
+            class StubQueryService:
+                def __init__(self, config: AppConfig) -> None:
+                    self.track_context_service = self
+
+                def load_or_create(self, track_id: str) -> TrackContext:
+                    return TrackContext(track_id=track_id)
+
+                def ask(self, request):
+                    return QueryResponse(
+                        answer_result=AnswerResult(
+                            answer="My notes say AI agents use tools and retrieval [Local 1].",
+                            sources=["[Local 1] Agents (agents.md)"],
+                            retrieved_chunks=[
+                                RetrievedChunk(
+                                    text="Agents use tools and retrieval.",
+                                    metadata={"note_title": "Agents", "source_path": "agents.md"},
+                                    distance_or_score=0.1,
+                                )
+                            ],
+                        ),
+                        debug=QueryDebugInfo(active_chat_provider="openai", active_chat_model="gpt-4.1-mini"),
+                    )
+
+            with patch.object(
+                OpenAIChatClient,
+                "answer_with_prompt",
+                side_effect=[
+                    "What do my notes say about AI agents?\nWhat recent external context is relevant to AI agents?",
+                    "[Local 1] My notes say agents use tools.",
+                ],
+            ):
+                response = ResearchService(
+                    config,
+                    query_service_cls=StubQueryService,
+                ).research(ResearchRequest(goal="Compare my notes on AI agents with recent external context"))
+
+            self.assertEqual(response.active_chat_provider, "openai")
+            self.assertEqual(response.active_chat_model, "gpt-4.1-mini")
+
     def test_research_reuses_same_track_context_instance_for_steps_and_save(self) -> None:
         service, tracking = make_research_service()
 
@@ -202,7 +253,7 @@ def make_research_service(
                             RetrievedChunk(
                                 text="Saved synthesis about agents.",
                                 metadata={
-                                    "note_title": "Research Answer",
+                                    "note_title": "Collaborator Output",
                                     "source_path": "research_answers/agents-answer.md",
                                     "source_kind": "saved_answer",
                                 },
@@ -226,7 +277,7 @@ def make_research_service(
                     answer="My notes say AI agents use tools and retrieval [Local 1].",
                     sources=[
                         "[Local 1] Agents (agents.md)",
-                        "[Saved 1] Research Answer (research_answers/agents-answer.md)",
+                        "[Saved 1] Collaborator Output (research_answers/agents-answer.md)",
                     ],
                     retrieved_chunks=[
                         RetrievedChunk(
@@ -241,7 +292,7 @@ def make_research_service(
                         RetrievedChunk(
                             text="Saved answer about agents.",
                             metadata={
-                                "note_title": "Research Answer",
+                                "note_title": "Collaborator Output",
                                 "source_path": "research_answers/agents-answer.md",
                                 "source_kind": "saved_answer",
                             },

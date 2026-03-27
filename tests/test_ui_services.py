@@ -62,7 +62,7 @@ class UIFacingServiceTests(unittest.TestCase):
                 "services.query_service.OllamaEmbeddingClient.embed_text",
                 return_value=[1.0, 0.0],
             ), patch(
-                "services.query_service.OllamaChatClient.answer_with_prompt",
+                "llm.OllamaChatClient.answer_with_prompt",
                 return_value="Grounded answer",
             ):
                 response = QueryService(config).ask(

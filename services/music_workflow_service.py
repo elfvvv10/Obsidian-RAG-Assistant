@@ -26,19 +26,30 @@ class MusicWorkflowService:
     def build_query_plan(self, request: QueryRequest) -> WorkflowExecutionPlan:
         return WorkflowExecutionPlan(
             prompt_text=self._build_prompt_text(request.question, request.workflow_input),
-            save_path=self.default_save_path(request.collaboration_workflow),
+            save_path=self.default_save_path(
+                request.collaboration_workflow,
+                track_id=request.track_id if request.use_track_context else None,
+            ),
         )
 
     def build_research_plan(self, request: ResearchRequest) -> WorkflowExecutionPlan:
         return WorkflowExecutionPlan(
             prompt_text=self._build_prompt_text(request.goal, request.workflow_input),
-            save_path=self.default_save_path(request.collaboration_workflow),
+            save_path=self.default_save_path(
+                request.collaboration_workflow,
+                track_id=request.track_id if request.use_track_context else None,
+            ),
         )
 
-    def default_save_path(self, workflow: CollaborationWorkflow) -> Path:
+    def default_save_path(self, workflow: CollaborationWorkflow, *, track_id: str | None = None) -> Path:
         if workflow == CollaborationWorkflow.RESEARCH_SESSION:
-            return self.config.research_sessions_path
-        return self.config.draft_answers_path / _draft_folder_name(workflow)
+            base_path = self.config.research_sessions_path
+        else:
+            base_path = self.config.draft_answers_path / _draft_folder_name(workflow)
+        track_folder = _track_folder_name(track_id)
+        if not track_folder:
+            return base_path
+        return base_path / track_folder
 
     def _build_prompt_text(self, prompt_text: str, workflow_input: WorkflowInput) -> str:
         values = workflow_input.as_dict()
@@ -57,3 +68,10 @@ def _draft_folder_name(workflow: CollaborationWorkflow) -> str:
         CollaborationWorkflow.ARRANGEMENT_PLANNER: "answers/Arrangement Plans",
         CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM: "answers/Sound Design Brainstorms",
     }.get(workflow, "answers/General Asks")
+
+
+def _track_folder_name(track_id: str | None) -> str:
+    normalized = (track_id or "").strip()
+    if not normalized:
+        return ""
+    return normalized.replace("\\", "-").replace("/", "-")

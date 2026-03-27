@@ -1,7 +1,7 @@
 ---
 domain: system_design
 focus: ingestion_driven_intelligence
-project: obsidian_rag_assistant
+project: obsidian_track_collaborator
 status: active
 type: roadmap
 version: v2

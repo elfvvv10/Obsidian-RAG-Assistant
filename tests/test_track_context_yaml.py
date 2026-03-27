@@ -5,10 +5,20 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import yaml
 
 from config import AppConfig
 from saver import format_track_context_summary, save_answer
-from services.models import AnswerMode, CollaborationWorkflow, QueryRequest, RetrievalMode, TrackContext, WorkflowInput
+from services.models import (
+    AnswerMode,
+    CollaborationWorkflow,
+    QueryRequest,
+    RetrievalMode,
+    SectionContext,
+    TrackContext,
+    TrackContextUpdateProposal,
+    WorkflowInput,
+)
 from services.prompt_service import PromptService
 from services.query_service import QueryService
 from services.track_context_service import TrackContextService
@@ -54,6 +64,38 @@ class TrackContextUtilsTests(unittest.TestCase):
         context = normalize_track_context({"track_id": "moonlit_driver", "bpm": "fast"})
         self.assertIsNone(context.bpm)
 
+    def test_normalize_track_context_accepts_title_and_references_aliases(self) -> None:
+        context = normalize_track_context(
+            {
+                "track_id": "warehouse-hypnosis-01",
+                "title": "Warehouse Hypnosis",
+                "references": ["boris-brejcha-gravity"],
+            }
+        )
+
+        self.assertEqual(context.track_name, "Warehouse Hypnosis")
+        self.assertEqual(context.reference_tracks, ["boris-brejcha-gravity"])
+
+    def test_normalize_track_context_accepts_sections_mapping(self) -> None:
+        context = normalize_track_context(
+            {
+                "track_id": "warehouse-hypnosis-01",
+                "sections": {
+                    "drop": {
+                        "role": "main groove",
+                        "energy_level": "high",
+                        "elements": ["kick", "bass", "stab"],
+                        "issues": ["lacks impact"],
+                    }
+                },
+            }
+        )
+
+        self.assertIn("drop", context.sections)
+        self.assertEqual(context.sections["drop"].role, "main groove")
+        self.assertEqual(context.sections["drop"].energy_level, "high")
+        self.assertEqual(context.sections["drop"].issues, ["lacks impact"])
+
 
 class TrackContextPersistenceTests(unittest.TestCase):
     def test_save_load_load_or_create_update_and_empty_file(self) -> None:
@@ -83,6 +125,11 @@ class TrackContextPersistenceTests(unittest.TestCase):
             loaded = service.load("moonlit_driver")
             self.assertEqual(loaded.track_name, "Moonlit Driver")
             self.assertEqual(loaded.vibe, ["driving", "emotional"])
+            raw_saved = yaml.safe_load((service.yaml_directory / "moonlit_driver.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(raw_saved["title"], "Moonlit Driver")
+            self.assertEqual(raw_saved["references"], [])
+            self.assertNotIn("track_name", raw_saved)
+            self.assertNotIn("reference_tracks", raw_saved)
 
             empty_path = service.yaml_directory / "empty_track.yaml"
             empty_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +137,67 @@ class TrackContextPersistenceTests(unittest.TestCase):
             empty_loaded = service.load("empty_track")
             self.assertEqual(empty_loaded.track_id, "empty_track")
             self.assertIsNone(empty_loaded.current_problem)
+
+    def test_load_or_create_reads_legacy_track_name_and_reference_tracks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackContextService(make_config(root))
+            legacy_path = service.yaml_directory / "warehouse-hypnosis-01.yaml"
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "track_id": "warehouse-hypnosis-01",
+                        "track_name": "Warehouse Hypnosis",
+                        "reference_tracks": ["boris-brejcha-gravity"],
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = service.load_or_create("warehouse-hypnosis-01")
+
+            self.assertEqual(loaded.track_name, "Warehouse Hypnosis")
+            self.assertEqual(loaded.reference_tracks, ["boris-brejcha-gravity"])
+
+    def test_persistence_round_trips_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            service = TrackContextService(make_config(root))
+
+            context = TrackContext(
+                track_id="warehouse-hypnosis-01",
+                track_name="Warehouse Hypnosis",
+                sections={
+                    "intro": SectionContext(
+                        name="intro",
+                        role="tension builder",
+                        energy_level="low",
+                        elements=["kick", "atmos"],
+                    ),
+                    "drop": SectionContext(
+                        name="drop",
+                        bars="33-49",
+                        role="main groove",
+                        energy_level="high",
+                        issues=["lacks impact"],
+                    ),
+                },
+            )
+
+            service.save(context)
+            loaded = service.load("warehouse-hypnosis-01")
+
+            self.assertEqual(loaded.sections["intro"].role, "tension builder")
+            self.assertEqual(loaded.sections["drop"].bars, "33-49")
+            raw_saved = yaml.safe_load((service.yaml_directory / "warehouse-hypnosis-01.yaml").read_text(encoding="utf-8"))
+            self.assertIn("sections", raw_saved)
+            self.assertEqual(raw_saved["sections"]["drop"]["role"], "main groove")
 
 
 class TrackContextPromptTests(unittest.TestCase):
@@ -113,6 +221,13 @@ class TrackContextPromptTests(unittest.TestCase):
                     track_name="Moonlit Driver",
                     current_stage="arrangement",
                     current_problem="shorten the intro",
+                    sections={
+                        "intro": SectionContext(
+                            name="intro",
+                            role="tension builder",
+                            energy_level="low",
+                        )
+                    },
                 ),
             )
 
@@ -120,6 +235,8 @@ class TrackContextPromptTests(unittest.TestCase):
             self.assertIn("Track Id: moonlit_driver", payload.system_prompt)
             self.assertIn("Track Name: Moonlit Driver", payload.system_prompt)
             self.assertIn("Current Problem: shorten the intro", payload.system_prompt)
+            self.assertIn("Sections:", payload.system_prompt)
+            self.assertIn("intro | role=tension builder | energy=low", payload.system_prompt)
             self.assertNotIn("Projects/Legacy", payload.system_prompt)
 
     def test_yaml_track_context_takes_precedence_over_legacy_markdown(self) -> None:
@@ -601,10 +718,75 @@ class TrackContextQueryAndSaveTests(unittest.TestCase):
             )
 
             contents = destination.read_text(encoding="utf-8")
+            self.assertIn('track_id: "moonlit_driver"', contents)
+            self.assertIn('track_title: "Moonlit Driver"', contents)
             self.assertIn("## Track Context", contents)
             self.assertIn("Track ID: moonlit_driver", contents)
+            self.assertIn("Title: Moonlit Driver", contents)
             self.assertIn("Goals: Finish the first drop", contents)
             self.assertIn("## Summary", contents)
 
+    def test_saved_outputs_include_track_references_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            output_path = root / "output"
+            output_path.mkdir()
+            track_context = TrackContext(
+                track_id="warehouse-hypnosis-01",
+                track_name="Warehouse Hypnosis",
+                reference_tracks=["boris-brejcha-gravity"],
+            )
+
+            destination = save_answer(
+                output_path,
+                "Give me a sharper bassline direction",
+                AnswerResult(
+                    answer="Grounded answer [Local 1].",
+                    sources=["[Local 1] Track Note (track.md)"],
+                    retrieved_chunks=[],
+                ),
+                track_context=track_context,
+            )
+
+            contents = destination.read_text(encoding="utf-8")
+            self.assertIn("track_references:", contents)
+            self.assertIn('- "boris-brejcha-gravity"', contents)
+            self.assertIn("References: boris-brejcha-gravity", contents)
+
     def test_track_context_summary_formatter_is_empty_when_missing(self) -> None:
         self.assertEqual(format_track_context_summary(None), "")
+
+    def test_saved_outputs_can_include_track_context_update_review_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            output_path = root / "output"
+            output_path.mkdir()
+
+            destination = save_answer(
+                output_path,
+                "Capture that next step",
+                AnswerResult(
+                    answer="Grounded answer [Local 1].",
+                    sources=["[Local 1] Track Note (track.md)"],
+                    retrieved_chunks=[],
+                ),
+                track_context=TrackContext(track_id="moonlit_driver", track_name="Moonlit Driver"),
+                track_context_update=TrackContextUpdateProposal(
+                    track_id="moonlit_driver",
+                    summary="Capture the next action from this turn.",
+                    add_to_lists={"next_actions": ["tighten the fill before the first drop"]},
+                    section_focus="drop",
+                    confidence="medium",
+                ),
+                active_section_focus="drop",
+            )
+
+            contents = destination.read_text(encoding="utf-8")
+            self.assertIn('active_section_focus: "drop"', contents)
+            self.assertIn("track_context_update:", contents)
+            self.assertIn('summary: "Capture the next action from this turn."', contents)
+            self.assertIn('section_focus: "drop"', contents)
+            self.assertIn("## Suggested Track Context Update", contents)
+            self.assertIn("Summary: Capture the next action from this turn.", contents)
+            self.assertIn("Add To Lists", contents)
+            self.assertIn("next_actions: tighten the fill before the first drop", contents)

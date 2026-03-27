@@ -426,7 +426,7 @@ class IncrementalIndexingTests(unittest.TestCase):
                 RetrievedChunk(
                     text="Saved synthesis",
                     metadata={
-                        "note_title": "Research Answer",
+                        "note_title": "Collaborator Output",
                         "source_path": "research_answers/answer.md",
                         "source_kind": "saved_answer",
                     },
@@ -445,5 +445,5 @@ class IncrementalIndexingTests(unittest.TestCase):
             [],
         )
 
-        self.assertIn("[Saved 1] Research Answer (research_answers/answer.md)", sources)
+        self.assertIn("[Saved 1] Collaborator Output (research_answers/answer.md)", sources)
         self.assertIn("[Local 1] Agents (agents.md)", sources)

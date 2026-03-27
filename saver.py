@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from services.models import TrackContext
+from services.models import TrackContext, TrackContextUpdateProposal
+from services.track_context_update_review import proposal_markdown_block
 from utils import AnswerResult, current_timestamp, ensure_directory, slugify
 
 
@@ -28,6 +29,8 @@ def save_answer(
     workflow_type: str | None = None,
     workflow_input: dict[str, str] | None = None,
     track_context: TrackContext | None = None,
+    track_context_update: TrackContextUpdateProposal | None = None,
+    active_section_focus: str | None = None,
 ) -> Path:
     """Write the answer and sources to a markdown file."""
     ensure_directory(output_path)
@@ -48,6 +51,8 @@ def save_answer(
         workflow_type=workflow_type,
         workflow_input=workflow_input or {},
         track_context=track_context,
+        track_context_update=track_context_update,
+        active_section_focus=active_section_focus,
     )
     destination.write_text(body, encoding="utf-8")
     return destination
@@ -65,15 +70,18 @@ def _build_markdown(
     workflow_type: str | None,
     workflow_input: dict[str, str],
     track_context: TrackContext | None,
+    track_context_update: TrackContextUpdateProposal | None,
+    active_section_focus: str | None,
 ) -> str:
     sources = "\n".join(f"- {source}" for source in result.sources) or "- No sources available"
     summary = _build_summary(result.answer)
     key_points = _build_key_points(result.answer)
     key_points_block = "\n".join(f"- {point}" for point in key_points) or "- No key points extracted"
-    title = title_override.strip() if title_override and title_override.strip() else "Research Answer"
+    title = title_override.strip() if title_override and title_override.strip() else "Collaborator Output"
     timestamp = current_timestamp()
     structured_input_block = _build_structured_input_block(workflow_input)
     track_context_block = format_track_context_summary(track_context)
+    track_context_update_block = proposal_markdown_block(track_context_update)
     actionability_block = _build_actionability_block(workflow_type, result.answer)
     inference_note = (
         "This output includes explicitly labeled inference or stylistic extrapolation."
@@ -86,7 +94,7 @@ def _build_markdown(
         f'source_type: "{_escape_frontmatter(source_type)}"',
         f'status: "{_escape_frontmatter(status)}"',
         f"indexed: {'true' if indexed else 'false'}",
-        'created_by: "obsidian_rag_assistant"',
+        'created_by: "obsidian_track_collaborator"',
         f'created_at: "{timestamp}"',
         f'original_question: "{_escape_frontmatter(question)}"',
         f'saved_at: "{timestamp}"',
@@ -95,6 +103,26 @@ def _build_markdown(
         frontmatter_lines.append(f'domain_profile: "{_escape_frontmatter(domain_profile)}"')
     if workflow_type:
         frontmatter_lines.append(f'workflow_type: "{_escape_frontmatter(workflow_type)}"')
+    if track_context is not None:
+        frontmatter_lines.append(f'track_id: "{_escape_frontmatter(track_context.track_id)}"')
+        if track_context.track_name:
+            frontmatter_lines.append(f'track_title: "{_escape_frontmatter(track_context.track_name)}"')
+        if track_context.reference_tracks:
+            frontmatter_lines.append("track_references:")
+            for reference in track_context.reference_tracks:
+                frontmatter_lines.append(f'  - "{_escape_frontmatter(reference)}"')
+    if active_section_focus and active_section_focus.strip():
+        frontmatter_lines.append(f'active_section_focus: "{_escape_frontmatter(active_section_focus.strip())}"')
+    if track_context_update is not None and not track_context_update.is_empty():
+        frontmatter_lines.append("track_context_update:")
+        if track_context_update.summary.strip():
+            frontmatter_lines.append(f'  summary: "{_escape_frontmatter(track_context_update.summary.strip())}"')
+        if track_context_update.confidence.strip():
+            frontmatter_lines.append(f'  confidence: "{_escape_frontmatter(track_context_update.confidence.strip())}"')
+        if track_context_update.section_focus.strip():
+            frontmatter_lines.append(
+                f'  section_focus: "{_escape_frontmatter(track_context_update.section_focus.strip())}"'
+            )
     if workflow_input:
         frontmatter_lines.append("workflow_input:")
         for key, value in workflow_input.items():
@@ -111,6 +139,7 @@ def _build_markdown(
         f"## Input Summary\n\n"
         f"{structured_input_block}\n\n"
         f"{track_context_block}"
+        f"{track_context_update_block}"
         f"## Summary\n\n"
         f"{summary}\n\n"
         f"## {workflow_section_title}\n\n"
@@ -192,7 +221,7 @@ def format_track_context_summary(track_context: TrackContext | None) -> str:
         f"- Track ID: {track_context.track_id}",
     ]
     optional_fields = (
-        ("Track Name", track_context.track_name),
+        ("Title", track_context.track_name),
         ("Genre", track_context.genre),
         ("BPM", track_context.bpm),
         ("Key", track_context.key),
@@ -205,7 +234,7 @@ def format_track_context_summary(track_context: TrackContext | None) -> str:
     if track_context.vibe:
         lines.append(f"- Vibe: {', '.join(track_context.vibe)}")
     if track_context.reference_tracks:
-        lines.append(f"- Reference Tracks: {', '.join(track_context.reference_tracks)}")
+        lines.append(f"- References: {', '.join(track_context.reference_tracks)}")
     if track_context.known_issues:
         lines.append(f"- Known Issues: {', '.join(track_context.known_issues)}")
     if track_context.goals:

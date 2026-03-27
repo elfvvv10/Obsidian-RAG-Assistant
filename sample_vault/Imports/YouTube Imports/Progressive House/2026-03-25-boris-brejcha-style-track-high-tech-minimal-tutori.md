@@ -3,7 +3,7 @@ title: "Boris Brejcha Style Track | High Tech Minimal Tutorial | Pro Level Techn
 source_type: "youtube_import"
 status: "imported"
 indexed: false
-created_by: "obsidian_rag_assistant"
+created_by: "obsidian_track_collaborator"
 created_at: "2026-03-25 19:20:53"
 source_url: "https://www.youtube.com/watch?v=cHZy1QaeA7g"
 ingested_at: "2026-03-25 19:20:53"

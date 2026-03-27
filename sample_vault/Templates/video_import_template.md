@@ -2,7 +2,7 @@
 source_type: "youtube_video"
 status: "imported"
 indexed: false
-created_by: "obsidian_rag_assistant"
+created_by: "obsidian_track_collaborator"
 imported_at: "2026-03-25 20:15:00"
 video_title: "Full Video Title"
 source_url: "https://www.youtube.com/watch?v=example"

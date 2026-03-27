@@ -1,0 +1,55 @@
+track_id: moonlit_driver
+title: Moonlit Driver
+genre: progressive house
+bpm: 126
+key: A minor
+vibe:
+  - driving
+  - euphoric
+references:
+  - Tripchain
+current_stage: arrangement
+current_problem: first drop loses contrast after the initial 8 bars
+known_issues:
+  - first drop loses contrast after the initial 8 bars
+  - breakdown re-entry feels too polite
+goals:
+  - sharpen the first drop bass motif
+  - build more tension through the breakdown fill
+sections:
+  intro:
+    name: Intro
+    bars: 1-32
+    role: establish groove and atmosphere
+    energy_level: low
+    elements:
+      - kick
+      - bass pulse
+      - filtered arp
+    issues: []
+    notes: Keep the harmonic motion patient and leave room for the first lift.
+  breakdown:
+    name: Breakdown
+    bars: 65-96
+    role: keep tension alive while reducing weight
+    energy_level: medium
+    elements:
+      - arp tail
+      - vocal texture
+      - percussion ghosts
+    issues:
+      - re-entry lacks urgency
+    notes: Needs a stronger fill and more rising automation into the next drop.
+  drop:
+    name: Drop
+    bars: 33-64
+    role: main payoff groove
+    energy_level: high
+    elements:
+      - kick
+      - bass
+      - stab
+      - offbeat hat
+    issues:
+      - motif stops evolving after 8 bars
+    notes: The first 8 bars land well, but the second half needs a stronger hook variation.

@@ -37,47 +37,71 @@ def current_track_summary(
     display_name = track_context.track_name or track_context.track_id
     rows: list[tuple[str, str]] = [("Track ID", track_context.track_id)]
     optional_fields = (
-        ("Track Name", track_context.track_name),
+        ("Title", track_context.track_name),
         ("Genre", track_context.genre),
         ("BPM", str(track_context.bpm) if track_context.bpm is not None else ""),
         ("Key", track_context.key),
         ("Vibe", ", ".join(track_context.vibe)),
-        ("Reference Tracks", ", ".join(track_context.reference_tracks)),
+        ("References", ", ".join(track_context.reference_tracks)),
         ("Current Stage", track_context.current_stage),
         ("Current Problem", track_context.current_problem),
     )
     for label, value in optional_fields:
         if value:
             rows.append((label, value))
+    if track_context.sections:
+        section_summaries = []
+        for section_key, section in track_context.sections.items():
+            parts = [section.name or section_key]
+            if section.role:
+                parts.append(section.role)
+            if section.energy_level:
+                parts.append(section.energy_level)
+            section_summaries.append(" / ".join(parts))
+        rows.append(("Sections", "; ".join(section_summaries)))
     return ("Current Track", f"Using persistent Track Context for `{display_name}`.", rows)
 
 
 def track_context_status(
     *,
     use_track_context: bool,
-    track_id: str,
+    entered_track_id: str,
+    active_track_id: str,
     existed_before_load: bool,
     track_context: TrackContext | None,
 ) -> tuple[str, str]:
     """Return compact YAML track-memory status text for the sidebar."""
     if not use_track_context:
-        return ("Track memory is off.", "Enable YAML Track Context to load or create persistent track memory.")
-    if not track_id.strip():
-        return ("Track memory is on, but no Track ID is selected.", "Enter a Track ID to load an existing track or start a new one.")
+        return ("Track memory is off.", "Enable YAML Track Context to use persistent memory for the current in-progress track.")
+    if not active_track_id.strip() and not entered_track_id.strip():
+        return (
+            "Track memory is on, but no active track is loaded.",
+            "Enter a stable Track ID for your in-progress track, then click Load Track Context.",
+        )
+    if not active_track_id.strip() and entered_track_id.strip():
+        return (
+            f"`{entered_track_id.strip()}` is ready to load.",
+            "Load Track Context will open an existing track memory or initialize a new one for this in-progress track.",
+        )
     if track_context is None:
         return (
-            f"Track memory is waiting for `{track_id.strip()}`.",
-            "The track will load after a Track ID is provided.",
+            f"Track memory is waiting for `{active_track_id.strip()}`.",
+            "Load Track Context again if you want to refresh the active track memory.",
         )
     if existed_before_load:
         display_name = track_context.track_name or track_context.track_id
         return (
             f"Loaded existing track memory for `{display_name}`.",
-            "You are editing a saved YAML Track Context.",
+            "You are editing saved persistent memory for the active in-progress track.",
+        )
+    if entered_track_id.strip() and entered_track_id.strip() != active_track_id.strip():
+        return (
+            f"Active track memory: `{track_context.track_name or track_context.track_id}`.",
+            f"`{entered_track_id.strip()}` is pending. Click Load Track Context to switch active tracks.",
         )
     return (
         f"Started a new track memory for `{track_context.track_id}`.",
-        "This is a fresh YAML Track Context. Add details and save when ready.",
+        "This is a fresh persistent track memory. Add details and save when ready.",
     )
 
 

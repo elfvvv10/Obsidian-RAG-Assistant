@@ -5,7 +5,7 @@ domain: system_design
 ---
 type: roadmap
 domain: system_design
-project: obsidian_rag_assistant
+project: obsidian_track_collaborator
 version: v1
 status: active
 focus: ingestion_driven_intelligence
@@ -16,7 +16,7 @@ priority: high
 
 ## Purpose
 
-Transform the Obsidian RAG Assistant into a knowledge-shaped collaborator where:
+Transform Obsidian Track Collaborator into a knowledge-shaped collaborator where:
 
 - The assistant reflects ingested knowledge, not model priors
 - Retrieval + context drive intelligence

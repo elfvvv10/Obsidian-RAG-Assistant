@@ -221,6 +221,54 @@ class TrackContext:
     # Persistent issues + goals
     known_issues: list[str] = field(default_factory=list)
     goals: list[str] = field(default_factory=list)
+    # Optional section-aware track memory
+    sections: dict[str, "SectionContext"] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SectionContext:
+    """Lightweight section-specific track context for arrangement-aware collaboration."""
+
+    name: str
+    bars: str = ""
+    role: str = ""
+    energy_level: str = ""
+    elements: list[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class TrackContextUpdateProposal:
+    """Structured, reviewable assistant proposal for updating active Track Context."""
+
+    track_id: str = ""
+    summary: str = ""
+    set_fields: dict[str, object] = field(default_factory=dict)
+    add_to_lists: dict[str, list[str]] = field(default_factory=dict)
+    remove_from_lists: dict[str, list[str]] = field(default_factory=dict)
+    set_sections: dict[str, dict[str, object]] = field(default_factory=dict)
+    add_section_issues: dict[str, list[str]] = field(default_factory=dict)
+    remove_section_issues: dict[str, list[str]] = field(default_factory=dict)
+    add_section_elements: dict[str, list[str]] = field(default_factory=dict)
+    add_section_notes: dict[str, list[str]] = field(default_factory=dict)
+    section_focus: str = ""
+    confidence: str = ""
+    source_reasoning: str = ""
+
+    def is_empty(self) -> bool:
+        """Return whether the proposal contains any actual Track Context changes."""
+        return not (
+            self.set_fields
+            or self.add_to_lists
+            or self.remove_from_lists
+            or self.set_sections
+            or self.add_section_issues
+            or self.remove_section_issues
+            or self.add_section_elements
+            or self.add_section_notes
+            or bool(self.section_focus.strip())
+        )
 
 
 @dataclass(slots=True)
@@ -309,7 +357,7 @@ class VideoKnowledgeDocument:
     content_type: str = "video_knowledge"
     status: str = "imported"
     indexed: bool = False
-    created_by: str = "obsidian_rag_assistant"
+    created_by: str = "obsidian_track_collaborator"
     video_id: str | None = None
     transcript_source: str | None = None
     whisper_model: str | None = None
@@ -352,6 +400,7 @@ class QueryRequest:
     track_id: str | None = None
     use_track_context: bool = True
     track_context: "TrackContext | None" = None
+    section_focus: str | None = None
     recent_conversation: list["ChatMessage"] = field(default_factory=list)
     current_tasks: list["SessionTask"] = field(default_factory=list)
 
@@ -422,6 +471,10 @@ class QueryDebugInfo:
     active_chat_provider: str = ""
     active_chat_model: str = ""
     imported_genres_eligible: tuple[str, ...] = ()
+    response_mode_selected: str = "direct_answer"
+    followup_triggered: bool = False
+    missing_dimension: str = ""
+    active_section: str = ""
 
 
 @dataclass(slots=True)
@@ -452,6 +505,7 @@ class QueryResponse:
     collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK
     workflow_input: WorkflowInput = field(default_factory=WorkflowInput)
     track_context: TrackContext | None = None
+    track_context_update: TrackContextUpdateProposal | None = None
     track_context_suggestions: TrackContextSuggestions | None = None
 
     @property
@@ -521,6 +575,10 @@ class QueryResponse:
             for chunk in self.retrieved_chunks
             if chunk.metadata.get("content_category") == "generated_or_imported"
         ]
+
+    @property
+    def track_context_update_available(self) -> bool:
+        return self.track_context_update is not None and not self.track_context_update.is_empty()
 
     def with_saved_path(self, saved_path: Path) -> "QueryResponse":
         """Return a copy with the saved path filled in while preserving evidence state."""

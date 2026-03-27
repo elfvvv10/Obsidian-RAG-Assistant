@@ -17,7 +17,7 @@ fi
 
 source ".venv/bin/activate"
 
-echo "Launching Obsidian RAG Assistant from:"
+echo "Launching Obsidian Track Collaborator from:"
 echo "  $SCRIPT_DIR"
 echo
 

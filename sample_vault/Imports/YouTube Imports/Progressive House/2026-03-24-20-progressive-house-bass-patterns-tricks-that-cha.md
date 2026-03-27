@@ -3,7 +3,7 @@ title: "20+ Progressive House Bass Patterns & Tricks that CHANGED my Life"
 source_type: "youtube_import"
 status: "imported"
 indexed: false
-created_by: "obsidian_rag_assistant"
+created_by: "obsidian_track_collaborator"
 created_at: "2026-03-24 14:25:04"
 source_url: "https://youtu.be/t7Y-m6KdFQk?si=eDsMrrPSyF6egnRi"
 ingested_at: "2026-03-24 14:25:04"

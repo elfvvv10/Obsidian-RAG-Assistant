@@ -111,6 +111,30 @@ class OllamaChatClientTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "empty chat response"):
                 client.answer_question("What is this?", [])
 
+    def test_ollama_chat_client_returns_structured_json(self) -> None:
+        client = OllamaChatClient(make_config())
+
+        with patch(
+            "llm.requests.request",
+            side_effect=[
+                FakeResponse(200, {"models": [{"name": "hermes3"}]}),
+                FakeResponse(200, {"message": {"content": '{"track_id":"moonlit_driver","summary":"","set_fields":{},"add_to_lists":{},"remove_from_lists":{},"confidence":"","source_reasoning":""}'}}),
+            ],
+        ):
+            payload = client.answer_with_json_schema(
+                system_prompt="sys",
+                user_prompt="user",
+                schema_name="track_context_update_proposal",
+                json_schema={
+                    "type": "object",
+                    "properties": {"track_id": {"type": "string"}},
+                    "required": ["track_id"],
+                    "additionalProperties": False,
+                },
+            )
+
+        self.assertEqual(payload["track_id"], "moonlit_driver")
+
 
 class OpenAIChatClientTests(unittest.TestCase):
     def test_openai_chat_client_uses_model_override(self) -> None:
@@ -143,3 +167,38 @@ class OpenAIChatClientTests(unittest.TestCase):
         config.openai_chat_model = "gpt-4o-mini"
         with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
             OpenAIChatClient(config)
+
+    def test_openai_chat_client_returns_structured_json(self) -> None:
+        config = make_config()
+        config.openai_api_key = "test-key"
+        config.openai_chat_model = "gpt-4o-mini"
+        client = OpenAIChatClient(config)
+
+        with patch(
+            "llm.requests.request",
+            return_value=FakeResponse(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"track_id":"moonlit_driver","summary":"","set_fields":{},"add_to_lists":{},"remove_from_lists":{},"confidence":"","source_reasoning":""}'
+                            }
+                        }
+                    ]
+                },
+            ),
+        ):
+            payload = client.answer_with_json_schema(
+                system_prompt="sys",
+                user_prompt="user",
+                schema_name="track_context_update_proposal",
+                json_schema={
+                    "type": "object",
+                    "properties": {"track_id": {"type": "string"}},
+                    "required": ["track_id"],
+                    "additionalProperties": False,
+                },
+            )
+
+        self.assertEqual(payload["track_id"], "moonlit_driver")

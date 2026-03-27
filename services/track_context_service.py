@@ -100,7 +100,7 @@ class TrackContextService:
         destination = self._yaml_path(normalized.track_id)
         ensure_directory(destination.parent)
         body = yaml.safe_dump(
-            asdict(normalized),
+            self._serialize_yaml_context(normalized),
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,
@@ -224,6 +224,34 @@ class TrackContextService:
         if isinstance(value, list):
             return ", ".join(str(item).strip() for item in value if str(item).strip())
         return str(value).strip()
+
+    def _serialize_yaml_context(self, context: TrackContext) -> dict[str, object]:
+        """Return the canonical persisted YAML shape for v1 Track Context files."""
+        return {
+            "track_id": context.track_id,
+            "title": context.track_name,
+            "genre": context.genre,
+            "bpm": context.bpm,
+            "key": context.key,
+            "vibe": context.vibe,
+            "references": context.reference_tracks,
+            "current_stage": context.current_stage,
+            "current_problem": context.current_problem,
+            "known_issues": context.known_issues,
+            "goals": context.goals,
+            "sections": {
+                section_key: {
+                    "name": section.name,
+                    "bars": section.bars,
+                    "role": section.role,
+                    "energy_level": section.energy_level,
+                    "elements": section.elements,
+                    "issues": section.issues,
+                    "notes": section.notes,
+                }
+                for section_key, section in context.sections.items()
+            },
+        }
 
     def _debug_log(self, message: str, *args: object) -> None:
         if self.config.framework_debug:

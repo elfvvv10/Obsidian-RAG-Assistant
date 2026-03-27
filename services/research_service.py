@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
+from typing import TypeAlias
 
 from config import AppConfig
-from llm import OllamaChatClient
 from model_clients import ChatModelClient
 from model_provider import configured_chat_model, create_chat_client, effective_chat_provider
 from saver import save_answer
@@ -29,6 +29,7 @@ from web_search import WebSearchResult
 
 
 logger = get_logger()
+ChatClientOverride: TypeAlias = type[ChatModelClient] | None
 
 
 class ResearchService:
@@ -39,7 +40,7 @@ class ResearchService:
         config: AppConfig,
         *,
         query_service_cls: type[QueryService] = QueryService,
-        chat_client_cls: type[OllamaChatClient] = OllamaChatClient,
+        chat_client_cls: ChatClientOverride = None,
         prompt_service_cls: type[PromptService] = PromptService,
     ) -> None:
         self.config = config
@@ -161,9 +162,16 @@ class ResearchService:
         """Persist an existing research answer result and preserve prior workflow state."""
         saved_path = save_answer(
             self.music_workflow_service.default_save_path(
-                existing_response.collaboration_workflow
-                if existing_response is not None
-                else CollaborationWorkflow.RESEARCH_SESSION
+                (
+                    existing_response.collaboration_workflow
+                    if existing_response is not None
+                    else CollaborationWorkflow.RESEARCH_SESSION
+                ),
+                track_id=(
+                    existing_response.track_context.track_id
+                    if existing_response is not None and existing_response.track_context is not None
+                    else None
+                ),
             ),
             goal,
             answer_result,

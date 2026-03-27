@@ -96,6 +96,16 @@ def configured_chat_model(config: AppConfig, *, provider_override: str | None = 
     return config.ollama_chat_model.strip()
 
 
+def chat_provider_supports_structured_json(
+    config: AppConfig,
+    *,
+    provider_override: str | None = None,
+) -> bool:
+    """Return whether the active chat provider natively supports structured JSON output."""
+    provider = effective_chat_provider(config, provider_override=provider_override)
+    return provider in {"ollama", "openai"}
+
+
 def configured_embedding_model(config: AppConfig) -> str:
     """Return the configured default embedding model for the active embedding provider."""
     return config.ollama_embedding_model.strip()

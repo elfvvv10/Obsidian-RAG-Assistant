@@ -11,7 +11,14 @@ from unittest.mock import patch
 
 import main
 from config import AppConfig
-from services.models import IngestionResponse, QueryResponse, ResearchResponse
+from services.models import (
+    IngestionResponse,
+    QueryDebugInfo,
+    QueryResponse,
+    ResearchResponse,
+    TrackContext,
+    TrackContextUpdateProposal,
+)
 from utils import AnswerResult, RetrievedChunk
 
 
@@ -188,6 +195,119 @@ class CLITests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             request = ask_mock.call_args.args[0]
             self.assertEqual(request.retrieval_scope.value, "extended")
+
+    def test_main_ask_command_passes_track_context_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            with patch("main.load_config", return_value=config), patch(
+                "main.QueryService.ask"
+            ) as ask_mock, patch(
+                "main.prompt_to_save",
+                return_value=False,
+            ), patch(
+                "sys.argv",
+                [
+                    "main.py",
+                    "ask",
+                    "How do I improve this drop?",
+                    "--track-id",
+                    "moonlit_driver",
+                    "--use-track-context",
+                    "--section-focus",
+                    "drop",
+                ],
+            ):
+                ask_mock.return_value = QueryResponse(
+                    answer_result=AnswerResult(
+                        answer="Grounded answer",
+                        sources=["[Local 1] Track Note (track.md)"],
+                        retrieved_chunks=[
+                            RetrievedChunk(
+                                text="Track note",
+                                metadata={"note_title": "Track Note", "source_path": "track.md"},
+                                distance_or_score=0.1,
+                            )
+                        ],
+                    ),
+                )
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    exit_code = main.main()
+
+            self.assertEqual(exit_code, 0)
+            request = ask_mock.call_args.args[0]
+            self.assertEqual(request.track_id, "moonlit_driver")
+            self.assertTrue(request.use_track_context)
+            self.assertEqual(request.section_focus, "drop")
+
+    def test_run_ask_can_review_and_apply_track_context_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+            response = QueryResponse(
+                answer_result=AnswerResult(
+                    answer="Try a simpler fill before the drop.",
+                    sources=["[Local 1] Track Note (track.md)"],
+                    retrieved_chunks=[
+                        RetrievedChunk(
+                            text="Track note",
+                            metadata={"note_title": "Track Note", "source_path": "track.md"},
+                            distance_or_score=0.1,
+                        )
+                    ],
+                ),
+                debug=QueryDebugInfo(active_section="drop"),
+                track_context=TrackContext(track_id="moonlit_driver", track_name="Moonlit Driver"),
+                track_context_update=TrackContextUpdateProposal(
+                    track_id="moonlit_driver",
+                    summary="Capture the next production move.",
+                    add_to_lists={"next_actions": ["simplify the pre-drop fill"]},
+                    section_focus="drop",
+                    confidence="medium",
+                ),
+            )
+
+            preview_context = TrackContext(
+                track_id="moonlit_driver",
+                track_name="Moonlit Driver",
+                goals=["simplify the pre-drop fill"],
+            )
+            stub_service = unittest.mock.Mock()
+            stub_service.ask.return_value = response
+            stub_service.track_context_update_service.preview.return_value = preview_context
+            stub_service.track_context_update_service.apply.return_value = preview_context
+            stub_service.track_context_service.save.return_value = root / "output" / "track_contexts" / "moonlit_driver.yaml"
+
+            with patch("main.QueryService", return_value=stub_service), patch(
+                "builtins.input",
+                side_effect=["y"],
+            ), patch(
+                "main.prompt_to_save",
+                return_value=False,
+            ):
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    main.run_ask(
+                        config,
+                        "How do I improve this drop?",
+                        track_id="moonlit_driver",
+                        use_track_context=True,
+                        section_focus="drop",
+                    )
+
+            output = buffer.getvalue()
+            self.assertIn("Suggested Track Context Update", output)
+            self.assertIn("Updated Track Context Preview", output)
+            self.assertIn("simplify the pre-drop fill", output)
+            self.assertIn("Saved updated Track Context", output)
+            stub_service.track_context_update_service.apply.assert_called_once()
+            stub_service.track_context_service.save.assert_called_once_with(preview_context)
 
     def test_main_ingest_webpage_command_dispatches_to_ingestion_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
