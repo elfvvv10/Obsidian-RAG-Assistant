@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from config import AppConfig
 from model_clients import EmbeddingClient
 from reranker import rerank_chunks
-from services.models import RetrievalScope
+from services.models import (
+    CollaborationWorkflow,
+    DomainProfile,
+    RetrievalScoreDebug,
+    RetrievalScope,
+    TrackContext,
+)
 from utils import RetrievalFilters, RetrievalOptions, RetrievedChunk
 from vector_store import VectorStore
 
@@ -22,6 +28,7 @@ class RetrievalDebugResult:
     final_chunks: list[RetrievedChunk]
     reranking_applied: bool
     reranking_changed: bool
+    reranking_details: list[RetrievalScoreDebug]
 
 
 class Retriever:
@@ -43,6 +50,10 @@ class Retriever:
         filters: RetrievalFilters | None = None,
         options: RetrievalOptions | None = None,
         retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE,
+        track_context: TrackContext | None = None,
+        collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
+        section_focus: str | None = None,
+        domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
     ) -> list[RetrievedChunk]:
         """Return the top-k relevant chunks for a question."""
         return self.retrieve_with_debug(
@@ -50,6 +61,10 @@ class Retriever:
             filters=filters,
             options=options,
             retrieval_scope=retrieval_scope,
+            track_context=track_context,
+            collaboration_workflow=collaboration_workflow,
+            section_focus=section_focus,
+            domain_profile=domain_profile,
         ).final_chunks
 
     def retrieve_with_debug(
@@ -58,6 +73,10 @@ class Retriever:
         filters: RetrievalFilters | None = None,
         options: RetrievalOptions | None = None,
         retrieval_scope: RetrievalScope = RetrievalScope.KNOWLEDGE,
+        track_context: TrackContext | None = None,
+        collaboration_workflow: CollaborationWorkflow = CollaborationWorkflow.GENERAL_ASK,
+        section_focus: str | None = None,
+        domain_profile: DomainProfile = DomainProfile.ELECTRONIC_MUSIC,
     ) -> RetrievalDebugResult:
         """Return retrieved chunks plus public intermediate retrieval details."""
         if self.vector_store.count() == 0:
@@ -71,10 +90,24 @@ class Retriever:
             retrieval_scope,
             settings["include_saved_answers"],
         )
-        ranked_chunks = self._apply_reranking(query, candidates, settings)
+        ranked_chunks, reranking_details = self._apply_reranking(
+            query,
+            candidates,
+            settings,
+            track_context=track_context,
+            collaboration_workflow=collaboration_workflow,
+            section_focus=section_focus,
+            domain_profile=domain_profile,
+        )
         primary_chunks = self._select_primary_chunks(ranked_chunks, settings["top_k"])
         final_chunks = self._expand_linked_chunks(primary_chunks, settings["include_linked_notes"], retrieval_scope)
-        reranking_applied = bool(settings["rerank_enabled"] or settings["boost_tags"])
+        reranking_applied = bool(
+            settings["rerank_enabled"]
+            or settings["boost_tags"]
+            or track_context is not None
+            or bool((section_focus or "").strip())
+            or collaboration_workflow != CollaborationWorkflow.GENERAL_ASK
+        )
         return RetrievalDebugResult(
             initial_candidates=candidates,
             reranked_candidates=ranked_chunks,
@@ -82,6 +115,7 @@ class Retriever:
             final_chunks=final_chunks,
             reranking_applied=reranking_applied,
             reranking_changed=_chunk_signatures(candidates) != _chunk_signatures(ranked_chunks),
+            reranking_details=reranking_details,
         )
 
     def _resolve_settings(self, options: RetrievalOptions | None) -> dict[str, object]:
@@ -159,15 +193,31 @@ class Retriever:
         query: str,
         chunks: list[RetrievedChunk],
         settings: dict[str, object],
-    ) -> list[RetrievedChunk]:
-        if not settings["rerank_enabled"] and not settings["boost_tags"]:
-            return chunks
-        return rerank_chunks(
+        *,
+        track_context: TrackContext | None,
+        collaboration_workflow: CollaborationWorkflow,
+        section_focus: str | None,
+        domain_profile: DomainProfile,
+    ) -> tuple[list[RetrievedChunk], list[RetrievalScoreDebug]]:
+        if (
+            not settings["rerank_enabled"]
+            and not settings["boost_tags"]
+            and track_context is None
+            and not (section_focus or "").strip()
+            and collaboration_workflow == CollaborationWorkflow.GENERAL_ASK
+        ):
+            return chunks, []
+        ranked_chunks, details = rerank_chunks(
             query,
             chunks,
             boost_tags=settings["boost_tags"],
             tag_boost_weight=self.config.tag_boost_weight,
+            track_context=track_context,
+            collaboration_workflow=collaboration_workflow,
+            section_focus=section_focus,
+            domain_profile=domain_profile,
         )
+        return ranked_chunks, details
 
     def _select_primary_chunks(self, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
         return chunks[:top_k]

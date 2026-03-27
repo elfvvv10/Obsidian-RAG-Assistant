@@ -434,6 +434,17 @@ class SessionTask:
 
 
 @dataclass(slots=True)
+class RetrievalScoreDebug:
+    """Structured debug row for a reranked retrieval candidate."""
+
+    note_title: str
+    source_path: str
+    chunk_index: int
+    final_score: float
+    component_scores: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class QueryDebugInfo:
     """Structured retrieval debug information for UI and diagnostics."""
 
@@ -441,6 +452,7 @@ class QueryDebugInfo:
     primary_chunks: list[RetrievedChunk] = field(default_factory=list)
     reranking_applied: bool = False
     reranking_changed: bool = False
+    reranking_details: list[RetrievalScoreDebug] = field(default_factory=list)
     retrieval_filters: RetrievalFilters = field(default_factory=RetrievalFilters)
     retrieval_options: RetrievalOptions = field(default_factory=RetrievalOptions)
     retrieval_scope_requested: RetrievalScope = RetrievalScope.KNOWLEDGE

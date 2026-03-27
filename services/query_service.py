@@ -129,6 +129,7 @@ class QueryService:
                     request,
                     rewritten_query,
                     eligible_import_genres=eligible_import_genres,
+                    track_context=track_context,
                 )
                 final_chunks = primary_chunks
             except RuntimeError as exc:
@@ -169,14 +170,22 @@ class QueryService:
                 track_context=track_context,
             )
             initial_candidates = []
-            reranking_applied = bool(request.options.rerank or request.options.boost_tags)
+            reranking_applied = bool(
+                request.options.rerank
+                or request.options.boost_tags
+                or track_context is not None
+                or bool((request.section_focus or "").strip())
+                or request.collaboration_workflow != CollaborationWorkflow.GENERAL_ASK
+            )
             reranking_changed = False
+            reranking_details = []
         else:
             retrieval_debug = self._retrieve_chunks_with_debug(
                 retriever,
                 request,
                 rewritten_query,
                 eligible_import_genres=eligible_import_genres,
+                track_context=track_context,
             )
             initial_candidates = retrieval_debug.initial_candidates
             primary_chunks = retrieval_debug.primary_chunks
@@ -214,6 +223,7 @@ class QueryService:
             )
             reranking_applied = retrieval_debug.reranking_applied
             reranking_changed = retrieval_debug.reranking_changed
+            reranking_details = retrieval_debug.reranking_details
 
         warnings = _build_warnings(
             answer_result,
@@ -279,6 +289,7 @@ class QueryService:
                 primary_chunks=primary_chunks,
                 reranking_applied=reranking_applied,
                 reranking_changed=reranking_changed,
+                reranking_details=reranking_details,
                 retrieval_filters=request.filters,
                 retrieval_options=request.options,
                 retrieval_scope_requested=request.retrieval_scope,
@@ -479,6 +490,7 @@ class QueryService:
         retrieval_query: str,
         *,
         eligible_import_genres: tuple[str, ...],
+        track_context: TrackContext | None,
     ) -> list[RetrievedChunk]:
         try:
             chunks = retriever.retrieve(
@@ -486,15 +498,41 @@ class QueryService:
                 filters=request.filters,
                 options=request.options,
                 retrieval_scope=request.retrieval_scope,
+                track_context=track_context,
+                collaboration_workflow=request.collaboration_workflow,
+                section_focus=request.section_focus,
+                domain_profile=request.domain_profile,
             )
         except TypeError as exc:
-            if "retrieval_scope" not in str(exc):
+            message = str(exc)
+            if "unexpected keyword argument" in message:
+                try:
+                    chunks = retriever.retrieve(
+                        retrieval_query,
+                        filters=request.filters,
+                        options=request.options,
+                        retrieval_scope=request.retrieval_scope,
+                    )
+                except TypeError as inner_exc:
+                    if "retrieval_scope" not in str(inner_exc):
+                        raise
+                    chunks = retriever.retrieve(
+                        retrieval_query,
+                        filters=request.filters,
+                        options=request.options,
+                    )
+            elif "retrieval_scope" in message:
+                chunks = retriever.retrieve(
+                    retrieval_query,
+                    filters=request.filters,
+                    options=request.options,
+                    track_context=track_context,
+                    collaboration_workflow=request.collaboration_workflow,
+                    section_focus=request.section_focus,
+                    domain_profile=request.domain_profile,
+                )
+            else:
                 raise
-            chunks = retriever.retrieve(
-                retrieval_query,
-                filters=request.filters,
-                options=request.options,
-            )
         return _filter_chunks_for_import_genres(
             chunks,
             eligible_import_genres=eligible_import_genres,
@@ -508,6 +546,7 @@ class QueryService:
         retrieval_query: str,
         *,
         eligible_import_genres: tuple[str, ...],
+        track_context: TrackContext | None,
     ):
         if not hasattr(retriever, "retrieve_with_debug"):
             final_chunks = self._retrieve_chunks(
@@ -515,6 +554,7 @@ class QueryService:
                 request,
                 retrieval_query,
                 eligible_import_genres=eligible_import_genres,
+                track_context=track_context,
             )
             return RetrievalDebugResult(
                 initial_candidates=list(final_chunks),
@@ -523,6 +563,7 @@ class QueryService:
                 final_chunks=final_chunks,
                 reranking_applied=bool(request.options.rerank or request.options.boost_tags),
                 reranking_changed=False,
+                reranking_details=[],
             )
         options = _options_with_extra_candidates(request.options)
         try:
@@ -531,15 +572,41 @@ class QueryService:
                 filters=request.filters,
                 options=options,
                 retrieval_scope=request.retrieval_scope,
+                track_context=track_context,
+                collaboration_workflow=request.collaboration_workflow,
+                section_focus=request.section_focus,
+                domain_profile=request.domain_profile,
             )
         except TypeError as exc:
-            if "retrieval_scope" not in str(exc):
+            message = str(exc)
+            if "unexpected keyword argument" in message:
+                try:
+                    result = retriever.retrieve_with_debug(
+                        retrieval_query,
+                        filters=request.filters,
+                        options=options,
+                        retrieval_scope=request.retrieval_scope,
+                    )
+                except TypeError as inner_exc:
+                    if "retrieval_scope" not in str(inner_exc):
+                        raise
+                    result = retriever.retrieve_with_debug(
+                        retrieval_query,
+                        filters=request.filters,
+                        options=options,
+                    )
+            elif "retrieval_scope" in message:
+                result = retriever.retrieve_with_debug(
+                    retrieval_query,
+                    filters=request.filters,
+                    options=options,
+                    track_context=track_context,
+                    collaboration_workflow=request.collaboration_workflow,
+                    section_focus=request.section_focus,
+                    domain_profile=request.domain_profile,
+                )
+            else:
                 raise
-            result = retriever.retrieve_with_debug(
-                retrieval_query,
-                filters=request.filters,
-                options=options,
-            )
         return _filter_debug_result_for_import_genres(
             result,
             eligible_import_genres=eligible_import_genres,
@@ -946,6 +1013,26 @@ def _filter_debug_result_for_import_genres(
         for chunk in filtered_final
         if chunk.metadata.get("linked_context") and _chunk_signature(chunk) not in primary_signatures
     ]
+    reranking_details_by_signature = {
+        (detail.source_path, detail.chunk_index, detail.note_title): detail
+        for detail in result.reranking_details
+    }
+    filtered_details = [
+        reranking_details_by_signature[
+            (
+                str(chunk.metadata.get("source_path", "")),
+                int(chunk.metadata.get("chunk_index", 0) or 0),
+                str(chunk.metadata.get("note_title", "")),
+            )
+        ]
+        for chunk in reranked_candidates
+        if (
+            str(chunk.metadata.get("source_path", "")),
+            int(chunk.metadata.get("chunk_index", 0) or 0),
+            str(chunk.metadata.get("note_title", "")),
+        )
+        in reranking_details_by_signature
+    ]
     return RetrievalDebugResult(
         initial_candidates=initial_candidates,
         reranked_candidates=reranked_candidates,
@@ -953,6 +1040,7 @@ def _filter_debug_result_for_import_genres(
         final_chunks=primary_chunks + linked_chunks,
         reranking_applied=result.reranking_applied,
         reranking_changed=_chunk_signatures(initial_candidates) != _chunk_signatures(reranked_candidates),
+        reranking_details=filtered_details,
     )
 
 
