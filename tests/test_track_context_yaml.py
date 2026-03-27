@@ -163,6 +163,105 @@ class TrackContextPersistenceTests(unittest.TestCase):
             self.assertEqual(loaded.track_name, "Warehouse Hypnosis")
             self.assertEqual(loaded.reference_tracks, ["boris-brejcha-gravity"])
 
+    def test_canonical_yaml_load_is_preferred_even_when_legacy_markdown_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            project_dir = vault / "Projects" / "Moonlit Driver"
+            project_dir.mkdir(parents=True)
+            (root / "output").mkdir()
+            service = TrackContextService(make_config(root))
+            service.save_canonical_track_context(
+                TrackContext(
+                    track_id="moonlit_driver",
+                    track_name="YAML Title",
+                    genre="progressive house",
+                )
+            )
+            (project_dir / "track_context.md").write_text(
+                "---\ntrack_title: Legacy Markdown Title\nprimary_genre: techno\n---\n",
+                encoding="utf-8",
+            )
+
+            loaded = service.load_or_create_canonical_track_context("moonlit_driver")
+
+            self.assertEqual(loaded.track_name, "YAML Title")
+            self.assertEqual(loaded.genre, "progressive house")
+
+    def test_import_legacy_markdown_normalizes_into_yaml_compatible_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            project_dir = vault / "Projects" / "Moonlit Driver"
+            project_dir.mkdir(parents=True)
+            (root / "output").mkdir()
+            (project_dir / "track_context.md").write_text(
+                "---\n"
+                "track_title: Moonlit Driver\n"
+                "primary_genre: progressive house\n"
+                "bpm: 124\n"
+                "key: F minor\n"
+                "vibe:\n"
+                "  - driving\n"
+                "  - emotional\n"
+                "reference_tracks:\n"
+                "  - Pryda - Allein\n"
+                "status: arranging first full draft\n"
+                "current_issues:\n"
+                "  - drop lacks contrast\n"
+                "  - intro drags\n"
+                "priority_focus:\n"
+                "  - finish arrangement\n"
+                "  - improve transitions\n"
+                "---\n\n"
+                "Legacy body\n",
+                encoding="utf-8",
+            )
+            service = TrackContextService(make_config(root))
+
+            imported = service.import_legacy_markdown_track_context(
+                "moonlit_driver",
+                "Projects/Moonlit Driver",
+            )
+
+            self.assertEqual(imported.track_id, "moonlit_driver")
+            self.assertEqual(imported.track_name, "Moonlit Driver")
+            self.assertEqual(imported.genre, "progressive house")
+            self.assertEqual(imported.bpm, 124)
+            self.assertEqual(imported.key, "F minor")
+            self.assertEqual(imported.vibe, ["driving", "emotional"])
+            self.assertEqual(imported.reference_tracks, ["Pryda - Allein"])
+            self.assertEqual(imported.current_stage, "arrangement")
+            self.assertEqual(imported.current_problem, "drop lacks contrast")
+            self.assertEqual(imported.known_issues, ["drop lacks contrast", "intro drags"])
+            self.assertEqual(imported.goals, ["finish arrangement", "improve transitions"])
+
+    def test_migrate_legacy_markdown_persists_canonical_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            project_dir = vault / "Projects" / "Moonlit Driver"
+            project_dir.mkdir(parents=True)
+            (root / "output").mkdir()
+            (project_dir / "track_context.md").write_text(
+                "---\ntrack_title: Moonlit Driver\nprimary_genre: progressive house\n---\n",
+                encoding="utf-8",
+            )
+            service = TrackContextService(make_config(root))
+
+            migrated = service.migrate_legacy_markdown_to_canonical_yaml(
+                "moonlit_driver",
+                "Projects/Moonlit Driver/track_context.md",
+            )
+
+            self.assertEqual(migrated.track_name, "Moonlit Driver")
+            self.assertTrue(service.canonical_exists("moonlit_driver"))
+            raw_saved = yaml.safe_load(
+                (service.yaml_directory / "moonlit_driver.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(raw_saved["title"], "Moonlit Driver")
+            self.assertEqual(raw_saved["genre"], "progressive house")
+
     def test_persistence_round_trips_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -377,6 +476,31 @@ class TrackContextPromptTests(unittest.TestCase):
 
             self.assertIn("Legacy Markdown Title", payload.system_prompt)
             self.assertNotIn("YAML Title", payload.system_prompt)
+
+    def test_legacy_markdown_is_used_as_fallback_when_yaml_track_context_is_not_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            vault = root / "vault"
+            project_dir = vault / "Projects" / "Moonlit Driver"
+            project_dir.mkdir(parents=True)
+            (root / "output").mkdir()
+            (project_dir / "track_context.md").write_text(
+                "---\ntrack_title: Legacy Markdown Title\npriority_focus:\n  - finish arrangement\n---\n",
+                encoding="utf-8",
+            )
+            payload = PromptService(make_config(root)).build_prompt_payload(
+                "Critique this track.",
+                [],
+                web_results=[],
+                retrieval_mode=RetrievalMode.LOCAL_ONLY,
+                answer_mode=AnswerMode.BALANCED,
+                local_retrieval_weak=False,
+                collaboration_workflow=CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                workflow_input=WorkflowInput(track_context_path="Projects/Moonlit Driver"),
+            )
+
+            self.assertIn("Legacy Markdown Title", payload.system_prompt)
+            self.assertIn("compatibility-only", payload.system_prompt)
 
     def test_prompt_keeps_track_context_above_retrieval_context_and_question_last(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

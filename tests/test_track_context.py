@@ -48,7 +48,7 @@ class TrackContextServiceTests(unittest.TestCase):
             )
             service = TrackContextService(make_config(root))
 
-            result = service.get_track_context(
+            result = service.load_legacy_markdown_context(
                 CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
                 "Projects/Moonlit Driver",
             )
@@ -72,7 +72,7 @@ class TrackContextServiceTests(unittest.TestCase):
             )
             service = TrackContextService(make_config(root))
 
-            result = service.get_track_context(
+            result = service.load_legacy_markdown_context(
                 CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
                 "Projects/Moonlit Driver/track_context.md",
             )
