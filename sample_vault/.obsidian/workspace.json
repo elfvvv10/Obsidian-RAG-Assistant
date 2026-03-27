@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Projects/Current Tracks/Moonlit Driver/track_context.md",
+                "file": "Sources/System/Obsidian_Track_Collaborator_Roadmap.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "track_context"
+              "title": "Obsidian_Track_Collaborator_Roadmap"
             }
           }
         ]
@@ -180,8 +180,11 @@
       "bases:Create new base": false
     }
   },
-  "active": "9f8e7cc1c223ba7c",
+  "active": "6283c1982745da4f",
   "lastOpenFiles": [
+    "Sources/System/codex_prompt_next_build_sequence.md",
+    "Sources/System/collaborator_build_direction.md",
+    "Projects/Current Tracks/Moonlit Driver/track_context.md",
     "Sources/System/Obsidian_Track_Collaborator_Roadmap.md",
     "Saved Outputs/critiques/Track Concept Critiques/2026-03-27-can-you-please-provide-a-critique-on-the-answer.md",
     "Saved Outputs/track_contexts/moonlit_driver.yaml",
@@ -207,14 +210,11 @@
     "Templates/track_arrangement_template.md",
     "Knowledge/Arrangement/progressive_house_arrangement.md",
     "Knowledge/Arrangement/tripchain_arrangement.md",
-    "Projects/Current Tracks/Moonlit Driver/track_context.md",
     "Drafts",
     "Templates/track_context_template.md",
     "Templates/session_note_template.md",
     "Sources/Frameworks",
     "Templates/README.md",
-    "Imports/README.md",
-    "Projects/README.md",
     "Saved Outputs/critiques/Track Concept Critiques",
     "Saved Outputs/critiques/Genre Fit Reviews",
     "Saved Outputs/critiques"
