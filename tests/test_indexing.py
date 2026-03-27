@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from config import AppConfig
 from services.index_service import IndexService
+from services.models import CollaborationWorkflow, DomainProfile, TrackContext
 from services.prompt_service import build_citation_sources
 from main import run_ask, run_index
 from retriever import Retriever
@@ -204,6 +205,119 @@ class IncrementalIndexingTests(unittest.TestCase):
 
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0].metadata["note_title"], "Agents")
+
+    def test_retriever_weights_track_genre_and_problem_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def count(self) -> int:
+                    return 2
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None, **kwargs) -> list[RetrievedChunk]:
+                    return [
+                        RetrievedChunk(
+                            "general club arrangement advice with weak overlap",
+                            {
+                                "note_title": "Generic Club Notes",
+                                "source_path": "generic.md",
+                                "chunk_index": 0,
+                                "content_category": "curated_knowledge",
+                            },
+                            0.05,
+                        ),
+                        RetrievedChunk(
+                            "progressive house drop contrast and euphoric tension ideas for a flat second half",
+                            {
+                                "note_title": "Progressive House Drop Notes",
+                                "source_path": "ph-drop.md",
+                                "chunk_index": 0,
+                                "content_category": "curated_knowledge",
+                                "import_genre": "progressive house",
+                                "heading_context": "drop contrast",
+                            },
+                            0.22,
+                        ),
+                    ]
+
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+
+            results = retriever.retrieve(
+                "How do I improve this drop?",
+                options=RetrievalOptions(top_k=1, candidate_count=2, rerank=False),
+                track_context=TrackContext(
+                    track_id="moonlit_driver",
+                    genre="progressive house",
+                    vibe=["euphoric"],
+                    current_problem="flat second half of the drop",
+                ),
+            )
+
+            self.assertEqual(results[0].metadata["note_title"], "Progressive House Drop Notes")
+
+    def test_retriever_weights_workflow_relevance_for_arrangement_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "vault").mkdir()
+            (root / "output").mkdir()
+            config = make_config(root)
+
+            class StubEmbeddingClient:
+                def embed_text(self, text: str) -> list[float]:
+                    return [1.0, 0.0]
+
+            class StubVectorStore:
+                def count(self) -> int:
+                    return 2
+
+                def query(self, query_embedding: list[float], top_k: int, filters=None, **kwargs) -> list[RetrievedChunk]:
+                    return [
+                        RetrievedChunk(
+                            "drop arrangement and energy flow notes",
+                            {
+                                "note_title": "Track Arrangement",
+                                "source_path": "arrangement.md",
+                                "chunk_index": 0,
+                                "source_type": "track_arrangement",
+                                "arrangement_section_name": "Drop",
+                                "content_category": "curated_knowledge",
+                            },
+                            0.22,
+                        ),
+                        RetrievedChunk(
+                            "drop impact notes from a general article",
+                            {
+                                "note_title": "General Notes",
+                                "source_path": "general.md",
+                                "chunk_index": 0,
+                                "content_category": "curated_knowledge",
+                            },
+                            0.05,
+                        ),
+                    ]
+
+            retriever = Retriever(config, StubEmbeddingClient(), StubVectorStore())
+
+            debug = retriever.retrieve_with_debug(
+                "How can I improve the drop arrangement?",
+                options=RetrievalOptions(top_k=1, candidate_count=2, rerank=False),
+                collaboration_workflow=CollaborationWorkflow.TRACK_CONCEPT_CRITIQUE,
+                section_focus="drop",
+                domain_profile=DomainProfile.ELECTRONIC_MUSIC,
+            )
+
+            self.assertEqual(debug.primary_chunks[0].metadata["note_title"], "Track Arrangement")
+            self.assertTrue(debug.reranking_details)
+            top_detail = debug.reranking_details[0]
+            self.assertIn("workflow_relevance", top_detail.component_scores)
+            self.assertIn("track_context_relevance", top_detail.component_scores)
 
     def test_index_version_mismatch_requires_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
