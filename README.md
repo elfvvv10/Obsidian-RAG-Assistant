@@ -8,6 +8,7 @@ The project is built for real working sessions rather than generic chat. You can
 
 - retrieving ideas, references, and notes from your vault
 - keeping persistent memory for an active track with YAML Track Context
+- carrying forward per-track tasks across sessions for continuity and prioritization
 - critiquing sections, arrangements, and overall track direction
 - generating practical output like bassline ideas, arrangement moves, and sound-design directions
 - saving collaborator outputs back into your vault with clear source separation
@@ -68,10 +69,11 @@ The included `sample_vault/` is set up for realistic local testing.
 ## Core Mental Model
 
 - `Track Context`: persistent track memory for the active in-progress track. Use it for identity, current problem, known issues, goals, and section-aware context.
+- `Track Tasks`: lightweight persisted per-track tasks. Use them to keep open work attached to the active track across sessions.
 - `Arrangement notes`: structural timeline and section description over time. Use them for bars, energy, elements, and arrangement flow.
 - `Saved Outputs`: generated collaborator artifacts such as answers, critiques, arrangement plans, and research notes.
 
-The app keeps those layers separate so long-term memory, structure, and generated outputs do not collapse into one note type.
+The app keeps those layers separate so long-term memory, current work, structure, and generated outputs do not collapse into one note type.
 
 ## Main Workflows
 
@@ -134,9 +136,11 @@ Track Context is central to the project. YAML Track Context is stored under:
 
 It influences:
 
+- weighted retrieval and reranking
 - track-aware prompting
-- retrieval-only query rewriting
+- query rewriting and final retrieval ranking
 - section-aware critique specificity
+- persisted per-track task loading for the active track
 - reviewable Track Context update proposals
 - current-track visibility in the UI
 
@@ -146,6 +150,14 @@ CLI support for the YAML flow:
 - `--use-track-context` loads YAML Track Context for the turn
 - `--section-focus` carries a section such as `drop` or `breakdown` into the prompt
 - when an answer includes a reviewable Track Context update, the CLI shows the proposal, previews the updated Track Context, and lets you choose whether to apply it to YAML
+
+Per-track tasks are stored beside Track Context as separate YAML files:
+
+```text
+<OBSIDIAN_OUTPUT_PATH>/track_contexts/<track_id>.tasks.yaml
+```
+
+They are loaded automatically when the active YAML track is loaded. Only open tasks influence retrieval ranking, and they act as a small prioritization nudge rather than overriding stronger evidence.
 
 Compatibility note: legacy markdown `Projects/Current Tracks/<Track Name>/track_context.md` is still tolerated, but YAML Track Context is the primary editable path.
 
@@ -192,6 +204,7 @@ Saved notes can include:
 
 - workflow and domain metadata
 - Track Context summaries
+- active section focus and track-linked context metadata
 - reviewable Track Context update metadata
 - clearly labeled sources
 
@@ -200,8 +213,10 @@ Saved notes can include:
 What the project already does well:
 
 - local retrieval over a structured Obsidian vault
+- weighted reranking shaped by track context, section focus, and open track tasks
 - workflow-aware producer collaboration
 - persistent Track Context memory
+- persisted per-track task continuity
 - arrangement-aware critique support
 - structured webpage and video ingestion
 - local-first operation with optional OpenAI-compatible chat
@@ -210,6 +225,7 @@ What is intentionally not implemented yet:
 
 - OpenAI embeddings
 - automatic Track Context mutation without review
+- automatic assistant task persistence without review
 - autonomous critique scoring engines
 - a major UI redesign
 

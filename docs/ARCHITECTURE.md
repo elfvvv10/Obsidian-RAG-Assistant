@@ -21,6 +21,7 @@ vault -> loader -> chunker -> embeddings -> ChromaDB -> retriever -> prompt serv
 - `services/prompt_service.py`: answer policy, workflow-aware prompts, citation behavior, and track-aware prompt shaping
 - `services/index_service.py`: indexing and rebuild flow
 - `services/track_context_service.py`: YAML Track Context persistence
+- `services/track_task_service.py`: persisted per-track task storage and session-task adaptation
 - `services/arrangement_service.py`: arrangement parsing and rendering
 - `services/video_ingestion_service.py` and `services/webpage_ingestion_service.py`: external knowledge import pipelines
 
@@ -30,6 +31,7 @@ vault -> loader -> chunker -> embeddings -> ChromaDB -> retriever -> prompt serv
 - Embeddings are stored in local ChromaDB.
 - Retrieval can be `local_only`, `auto`, or `hybrid`.
 - Retrieval scope can stay on curated knowledge or expand into working notes and saved outputs.
+- A weighted reranking stage refines initial vector candidates using track-aware signals such as genre, current problem, section focus, and open persisted track tasks.
 - Prompt construction is workflow-aware and can inject Track Context, arrangement cues, and recent session state.
 - Answers preserve clear separation between local, saved, imported, and web evidence.
 
@@ -38,10 +40,13 @@ vault -> loader -> chunker -> embeddings -> ChromaDB -> retriever -> prompt serv
 Track memory is intentionally split into separate layers:
 
 - `Track Context`: persistent YAML memory for track identity, known issues, goals, and sections
+- `Track Tasks`: persisted per-track tasks stored beside Track Context and adapted into prompt/session state when needed
 - `Arrangement notes`: structural description of sections, bars, and energy over time
 - `Saved Outputs`: generated collaborator artifacts
 
 Track Context update proposals are reviewable before they are applied. The CLI and UI both support proposal preview and explicit user approval.
+
+Track tasks remain separate from the main Track Context YAML file. They are stored as per-track YAML files beside Track Context, load automatically with the active YAML track, and only open tasks are forwarded into retrieval so task relevance stays a bounded prioritization signal rather than a rescue path.
 
 ## Workflows
 
@@ -70,5 +75,6 @@ These workflows share the same trust boundaries:
 ## Compatibility Notes
 
 - YAML Track Context is the primary editable path
+- per-track tasks are a separate YAML-backed layer tied to the canonical YAML track state
 - legacy markdown `track_context.md` remains tolerated for backward compatibility
 - newer structured systems are layered on top of the same core retrieval pipeline
