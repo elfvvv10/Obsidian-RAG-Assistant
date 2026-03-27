@@ -12,13 +12,13 @@ from utils import RetrievedChunk
 _WEIGHTS = {
     "semantic_similarity": 3.0,
     "lexical_overlap": 1.6,
-    "title_context_overlap": 1.2,
+    "title_context_overlap": 1.0,
     "genre_match": 1.8,
     "domain_match": 0.75,
     "importance": 1.0,
     "track_context_relevance": 2.35,
-    "current_problem_match": 1.1,
-    "section_focus_match": 1.25,
+    "current_problem_match": 1.3,
+    "section_focus_match": 1.7,
     "task_relevance": 0.75,
     "workflow_relevance": 0.8,
 }
