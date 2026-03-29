@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from utils import ensure_directory
 
@@ -107,7 +107,7 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     """Load and validate configuration from a .env file and environment."""
-    load_dotenv()
+    load_environment()
 
     vault_path = _required_path_env("OBSIDIAN_VAULT_PATH", must_exist=True, directory_only=True)
     output_path = _required_path_env("OBSIDIAN_OUTPUT_PATH", must_exist=False, directory_only=True)
@@ -250,6 +250,15 @@ def load_config() -> AppConfig:
         track_critique_framework_path=track_critique_framework_path,
         framework_debug=framework_debug,
     )
+
+
+def load_environment() -> Path | None:
+    """Load environment variables from the nearest .env without overriding explicit env vars."""
+    discovered = find_dotenv(usecwd=True)
+    if discovered:
+        load_dotenv(discovered, override=False)
+        return Path(discovered)
+    return None
 
 
 def _required_path_env(name: str, *, must_exist: bool, directory_only: bool) -> Path:

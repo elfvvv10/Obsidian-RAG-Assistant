@@ -69,6 +69,25 @@ class ModelProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
             create_chat_client(config)
 
+    def test_openai_api_key_is_not_required_when_effective_provider_is_ollama(self) -> None:
+        config = make_config()
+        config.chat_provider = "ollama"
+        config.openai_chat_model = "gpt-4o-mini"
+        config.openai_api_key = ""
+
+        client = create_chat_client(config)
+
+        self.assertIsInstance(client, OllamaChatClient)
+
+    def test_provider_override_to_openai_requires_api_key(self) -> None:
+        config = make_config()
+        config.chat_provider = "ollama"
+        config.openai_chat_model = "gpt-4o-mini"
+        config.openai_api_key = ""
+
+        with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
+            create_chat_client(config, provider_override="openai")
+
     def test_create_chat_client_honors_provider_override(self) -> None:
         config = make_config()
         config.chat_provider = "openai"
