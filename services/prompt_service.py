@@ -609,8 +609,8 @@ def _build_user_prompt(
         "External web evidence:\n"
         f"{web_context_block}\n\n"
         f"Question: {question}\n\n"
-        f"{_workflow_instructions(collaboration_workflow)}\n"
-        f"{_practical_output_instructions(practical_output_mode, local_retrieval_weak=local_retrieval_weak)}\n"
+        f"{_workflow_instructions(collaboration_workflow, practical_output_mode=practical_output_mode)}\n"
+        f"{_practical_output_instructions(collaboration_workflow, practical_output_mode, local_retrieval_weak=local_retrieval_weak)}\n"
         f"{mode_instructions}\n"
     )
 
@@ -643,7 +643,11 @@ def _mode_instructions(answer_mode: AnswerMode) -> str:
     )
 
 
-def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str:
+def _workflow_instructions(
+    collaboration_workflow: CollaborationWorkflow,
+    *,
+    practical_output_mode: str | None = None,
+) -> str:
     if collaboration_workflow == CollaborationWorkflow.GENRE_FIT_REVIEW:
         return (
             "Workflow instructions:\n"
@@ -679,10 +683,15 @@ def _workflow_instructions(collaboration_workflow: CollaborationWorkflow) -> str
             "- Make the plan readable for a producer returning to a session later."
         )
     if collaboration_workflow == CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM:
+        structured_block = (
+            _sound_design_pattern_contract_block()
+            if practical_output_mode == "midi_pattern"
+            else _sound_design_structured_output_block()
+        )
         return (
             "Workflow instructions:\n"
             f"{_music_collaboration_instruction_block()}\n"
-            f"{_sound_design_structured_output_block()}\n"
+            f"{structured_block}\n"
             "- Focus on synth, drum, bass, texture, FX, modulation, layering, and space.\n"
             "- Suggest practical production directions rather than abstract adjectives alone.\n"
             "- Note mix-role implications when helpful."
@@ -799,7 +808,12 @@ def _music_collaboration_instruction_block() -> str:
     )
 
 
-def _practical_output_instructions(practical_output_mode: str | None, *, local_retrieval_weak: bool) -> str:
+def _practical_output_instructions(
+    collaboration_workflow: CollaborationWorkflow,
+    practical_output_mode: str | None,
+    *,
+    local_retrieval_weak: bool,
+) -> str:
     if practical_output_mode is None:
         return ""
 
@@ -815,7 +829,10 @@ def _practical_output_instructions(practical_output_mode: str | None, *, local_r
         weak_retrieval_line,
         "- Never substitute links, sources, videos, or reference summaries for actual output.",
     ]
-    if practical_output_mode == "midi_pattern":
+    if (
+        practical_output_mode == "midi_pattern"
+        and collaboration_workflow != CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM
+    ):
         shared_lines.extend(
             [
                 "- Provide at least 2 pattern examples.",
@@ -875,6 +892,22 @@ def _sound_design_structured_output_block() -> str:
         "- Prefer recommendations that a knowledgeable producer in the requested genre would recognize as sensible starting points.\n"
         "- Reject arbitrary or musically implausible ideas even if a retrieved source mentions them.\n"
         "- Cross-genre ideas are allowed only as clearly labeled optional variations."
+    )
+
+
+def _sound_design_pattern_contract_block() -> str:
+    return (
+        "- For this workflow, structure the answer exactly as: PRIMARY IDEA, MIDI PATTERN, WHY IT WORKS, SOUND DESIGN, ONE VARIATION, FOLLOW-UP.\n"
+        "- PRIMARY IDEA: give exactly one strong idea, no multiple options, no hedging, and make it directly usable in a DAW.\n"
+        "- MIDI PATTERN is mandatory and must include exact Ableton-style timing positions, note lengths or decay behavior, and the relationship to the kick pattern.\n"
+        "- WHY IT WORKS must explain specifically how the pattern interacts with the kick, not generic groove theory.\n"
+        "- SOUND DESIGN must support the pattern directly and must not drift into generic preset advice.\n"
+        "- ONE VARIATION: provide exactly one variation that evolves the main idea.\n"
+        "- FOLLOW-UP: ask one short, practical question that continues the collaboration.\n"
+        "- Do not provide multiple recipes, multiple options, or a menu of alternatives.\n"
+        "- Do not give vague rhythmic advice. Timing must be concrete enough to program directly in a DAW.\n"
+        "- Always start with something the user can try immediately against the kick.\n"
+        "- If the user did not state the kick pattern explicitly, make the smallest reasonable electronic-music assumption and state the MIDI relationship clearly."
     )
 
 

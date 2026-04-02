@@ -402,20 +402,48 @@ class AnswerModePolicyTests(unittest.TestCase):
         self.assertIn("prioritize genre-native techniques first", prompt_payload.user_prompt)
         self.assertIn("Treat cross-genre or adjacent-genre ideas as optional variations", prompt_payload.user_prompt)
         self.assertIn("provide multiple concrete, usable ideas", prompt_payload.user_prompt)
+        self.assertIn("PRIMARY IDEA", prompt_payload.user_prompt)
+        self.assertIn("MIDI PATTERN", prompt_payload.user_prompt)
+        self.assertIn("WHY IT WORKS", prompt_payload.user_prompt)
+        self.assertIn("SOUND DESIGN", prompt_payload.user_prompt)
+        self.assertIn("ONE VARIATION", prompt_payload.user_prompt)
+        self.assertIn("FOLLOW-UP", prompt_payload.user_prompt)
+        self.assertIn("give exactly one strong idea", prompt_payload.user_prompt)
+        self.assertIn("relationship to the kick pattern", prompt_payload.user_prompt)
+        self.assertIn("exact Ableton-style timing positions", prompt_payload.user_prompt)
+        self.assertNotIn("Production Recipes", prompt_payload.user_prompt)
+        self.assertNotIn("Provide at least 2 pattern examples", prompt_payload.user_prompt)
+
+    def test_sound_design_patch_request_keeps_existing_broader_structure(self) -> None:
+        service, tracking = make_query_service(
+            local_chunks=[
+                RetrievedChunk(
+                    text="Warm pads benefit from slow attack and filtered upper harmonics.",
+                    metadata={"note_title": "Pad Design", "source_path": "pads.md"},
+                    distance_or_score=0.1,
+                )
+            ],
+            web_results=[],
+            answer_text="Grounded answer [Local 1].",
+        )
+
+        service.ask(
+            QueryRequest(
+                question="Design a warm breakdown pad patch",
+                collaboration_workflow=CollaborationWorkflow.SOUND_DESIGN_BRAINSTORM,
+                workflow_input=WorkflowInput(genre="progressive house"),
+            )
+        )
+
+        prompt_payload = tracking["last_prompt"]
+        self.assertIsNotNone(prompt_payload)
         self.assertIn("Quick Answer", prompt_payload.user_prompt)
         self.assertIn("Production Recipes", prompt_payload.user_prompt)
         self.assertIn("Groove / MIDI", prompt_payload.user_prompt)
-        self.assertIn("Sound Design", prompt_payload.user_prompt)
         self.assertIn("How to Build It", prompt_payload.user_prompt)
-        self.assertIn("Where to Use It", prompt_payload.user_prompt)
-        self.assertIn("Do not open with phrases such as 'Based on the provided context'", prompt_payload.user_prompt)
-        self.assertIn("Do not produce generic advice or filler phrases", prompt_payload.user_prompt)
-        self.assertIn("Core recipes must be musically plausible for the requested genre or style", prompt_payload.user_prompt)
-        self.assertIn("prioritize genre-common archetypes first", prompt_payload.user_prompt)
-        self.assertIn("Weakly related or cross-genre retrieved material must not become core recommendations", prompt_payload.user_prompt)
-        self.assertIn("optional inspiration or an optional variation", prompt_payload.user_prompt)
-        self.assertIn("sensible starting points", prompt_payload.user_prompt)
-        self.assertIn("Reject arbitrary or musically implausible ideas", prompt_payload.user_prompt)
+        self.assertNotIn("PRIMARY IDEA", prompt_payload.user_prompt)
+        self.assertNotIn("MIDI PATTERN", prompt_payload.user_prompt)
+        self.assertNotIn("give exactly one strong idea", prompt_payload.user_prompt)
 
     def test_non_research_workflow_gains_shared_collaborator_contract(self) -> None:
         service, tracking = make_query_service(
@@ -509,6 +537,8 @@ class AnswerModePolicyTests(unittest.TestCase):
             prompt_payload.system_prompt.index("careful, grounded collaborator for an Obsidian vault"),
             prompt_payload.system_prompt.index("Producer-collaborator behavior:"),
         )
+        self.assertNotIn("PRIMARY IDEA", prompt_payload.user_prompt)
+        self.assertNotIn("FOLLOW-UP", prompt_payload.user_prompt)
 
     def test_drop_feels_flat_prompt_prioritizes_main_issue_and_next_steps(self) -> None:
         service, tracking = make_query_service(
